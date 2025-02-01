@@ -1,272 +1,412 @@
+import sys
 import os
-import tkinter as tk
-from tkinter import ttk
-from tkinter import filedialog
-from skimage.io import imread, imsave
-from skimage.exposure import match_histograms, adjust_gamma, rescale_intensity
-from skimage.color import rgb2lab, lab2rgb
+import rawpy
 import numpy as np
-from PIL import Image, ImageTk
+from skimage.exposure import match_histograms, equalize_hist, equalize_adapthist
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QLabel, QPushButton, QFileDialog, QVBoxLayout, QWidget, QHBoxLayout, QSlider
+)
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import Qt
 
-class ImageEditorApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Image Editor")
-        
-        # Configure style
-        style = ttk.Style()
-        style.configure('TFrame', padding=5)
-        style.configure('TButton', padding=2)
-        style.configure('TLabel', padding=2)
+class NegativeImageProcessor:
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.image = self._load_raw_image()
+        self.original_image = self.image.copy()  # Store the original image for reference
 
-        # Create main container
-        self.main_container = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
-        self.main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    def _load_raw_image(self):
+        """
+        Loads a raw image file (CR2, CR3, or DNG) and converts it to an image array.
+
+        Returns:
+            ndarray: Loaded image array.
+        """
+        with rawpy.imread(self.file_path) as raw:
+            return raw.postprocess()
+    
+    def process_raw_image_with_equalize(self):
+        """
+        Process the raw image file:
+        1. Perform histogram matching to align RGB channels.
+        2. Invert the colors.
+        3. Apply histogram equalization.
+
+        Returns:
+            ndarray: Processed image.
+        """
+        # Step 1: Histogram matching
+        matched_img = self.image.copy()
+        matched_img[:, :, 0] = match_histograms(self.image[:, :, 0], self.image[:, :, 1])  # Match red to green
+        matched_img[:, :, 2] = match_histograms(self.image[:, :, 2], self.image[:, :, 1])  # Match blue to green
+
+        # Step 2: Invert the colors
+        inverted_img = 255 - matched_img
+        r, g, b = inverted_img[:,:,0], inverted_img[:,:,1], inverted_img[:,:,2] 
+        # Apply adaptive histogram equalization to each channel
+
+        r_eq = equalize_adapthist(r)
+
+        g_eq = equalize_adapthist(g)
+
+        b_eq = equalize_adapthist(b)
+
+        # Step 3: Apply histogram equalization
+        #equalized_img = equalize_hist(inverted_img)
+        equalized_img = np.stack([r_eq, g_eq, b_eq], axis=2)
+        return equalized_img
+
+    def adjust_image_exposure(self, image, exposure_value=0):
+        exposure_value = max(-3, min(exposure_value, 3))
+        scaling_factor = 2 ** exposure_value
+        adjusted_image = image * scaling_factor
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_image_contrast(self, image, contrast_factor=0.0):
+        contrast_factor = max(-1, min(contrast_factor, 1))
+        mean_intensity = np.mean(image)
+        adjusted_image = (image - mean_intensity) * (1 + contrast_factor) + mean_intensity
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_gamma(self, image, gamma=1.0):
+        if gamma <= 0:
+            raise ValueError("Gamma value must be greater than 0.")
+        adjusted_image = np.power(image, gamma)
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_white_balance(self, image, wb_factor=0.0):
+        if image.shape[-1] != 3:
+            raise ValueError("Input image must have 3 color channels (RGB).")
+        wb_factor *= 0.5
+        red_gain = 1 + wb_factor
+        blue_gain = 1 - wb_factor
+        green_gain = 1
+        adjusted_image = image.copy()
+        adjusted_image[:, :, 0] *= red_gain
+        adjusted_image[:, :, 1] *= green_gain
+        adjusted_image[:, :, 2] *= blue_gain
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_image_tint(self, image, tint_factor=0.0):
+        if image.shape[-1] != 3:
+            raise ValueError("Input image must have 3 color channels (RGB).")
+        tint_factor *= 0.5
+        green_gain = 1 - tint_factor
+        red_blue_gain = 1 + tint_factor
+        adjusted_image = image.copy()
+        adjusted_image[:, :, 0] *= red_blue_gain
+        adjusted_image[:, :, 1] *= green_gain
+        adjusted_image[:, :, 2] *= red_blue_gain
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_vibrance(self, image, vibrance_factor=0.0):
+        vibrance_factor = max(-1, min(vibrance_factor, 1))
+        luminance = np.mean(image, axis=2, keepdims=True)
+        adjusted_image = image + (image - luminance) * vibrance_factor
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_saturation(self, image, saturation_factor=0.0):
+        saturation_factor = max(-1, min(saturation_factor, 1))
+        luminance = np.mean(image, axis=2, keepdims=True)
+        adjusted_image = luminance + (image - luminance) * (1 + saturation_factor)
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_red_channel(self, image, red_factor=0.0):
+        red_factor = max(-1, min(red_factor, 1))
+        adjusted_image = image.copy()
+        adjusted_image[:, :, 0] *= (1 + red_factor)
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_green_channel(self, image, green_factor=0.0):
+        green_factor = max(-1, min(green_factor, 1))
+        adjusted_image = image.copy()
+        adjusted_image[:, :, 1] *= (1 + green_factor)
+        return np.clip(adjusted_image, 0, 1)
+
+    def adjust_blue_channel(self, image, blue_factor=0.0):
+        blue_factor = max(-1, min(blue_factor, 1))
+        adjusted_image = image.copy()
+        adjusted_image[:, :, 2] *= (1 + blue_factor)
+        return np.clip(adjusted_image, 0, 1)
+
+    def flip_image_lr(self, image):
+        return np.fliplr(image)
+
+    def rotate_image_90(self, image):
+        return np.rot90(image)
+
+    def apply_vignetting(self, image, strength=0.5):
+        strength = max(0, min(strength, 1))
+        rows, cols = image.shape[:2]
+        y, x = np.ogrid[:rows, :cols]
+        center_x, center_y = cols / 2, rows / 2
+        distance = np.sqrt((x - center_x)**2 + (y - center_y)**2)
+        max_distance = np.sqrt((2 * center_x)**2 + (2 * center_y)**2)
+        radial_gradient = 1 - (distance / max_distance)
+        radial_gradient = np.clip(radial_gradient, 0, 1) ** (1 / (1 - strength))
+        adjusted_image = image.copy()
+        for i in range(3):
+            adjusted_image[:, :, i] *= radial_gradient
+        return np.clip(adjusted_image, 0, 1)
+
+
+class ImageViewer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.slider_values = {}  # Track current slider values
+        self.slider_labels = {}  # Initialize the slider_labels dictionary
+        self.sliders = {}  # Initialize the sliders dictionary
+        self.image_slider_states = {}  # Store slider states for each image
+        self.initUI()
+        self.image_files = []
+        self.current_image_index = -1
+        self.processed_image = None
+        self.original_processed_image = None  # Store the original processed image
+        self.processor = None
+
+    def initUI(self):
+        self.setWindowTitle('Negative Image Processor')
+        self.setGeometry(100, 100, 1200, 800)
+
+        # Use a better font
+        font = self.font()
+        font.setPointSize(10)
+        self.setFont(font)
+
+        # Central widget and main layout
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+
+        # Main layout: horizontal split between controls (left) and image (right)
+        self.main_layout = QHBoxLayout(self.central_widget)
 
         # Left panel for controls
-        self.controls_frame = ttk.Frame(self.main_container)
-        self.main_container.add(self.controls_frame, weight=1)
+        self.controls_panel = QWidget()
+        self.controls_layout = QVBoxLayout(self.controls_panel)
+        self.main_layout.addWidget(self.controls_panel, stretch=1)  # Controls take 1/3 of the width
 
-        # Right panel for image
-        self.image_frame = ttk.Frame(self.main_container)
-        self.main_container.add(self.image_frame, weight=3)
+        # Right panel for image display
+        self.image_panel = QWidget()
+        self.image_layout = QVBoxLayout(self.image_panel)
+        self.main_layout.addWidget(self.image_panel, stretch=2)  # Image takes 2/3 of the width
 
-        # Initialize variables
-        self.image_files = []
-        self.current_index = 0
-        self.current_image = None
-        self.edited_image = None
-        self.base_adjusted_image = None
-        self.rotation_count = 0  # Track the number of 90-degree rotations
-        self.is_flipped = False  # Track whether the image is flipped
+        # Image display
+        self.image_label = QLabel(self)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(600, 600)  # Set a minimum size for the QLabel
+        self.image_layout.addWidget(self.image_label)
 
-        self._create_controls()
-        self._create_canvas()
+        # Buttons for navigation and actions
+        self.button_layout = QVBoxLayout()
 
-    def _create_controls(self):
-        # File controls section
-        file_section = ttk.LabelFrame(self.controls_frame, text="File Controls", padding=5)
-        file_section.pack(fill=tk.X, padx=5, pady=5)
+        self.open_dir_button = QPushButton('Open Directory', self)
+        self.open_dir_button.clicked.connect(self.open_directory)
+        self.button_layout.addWidget(self.open_dir_button)
 
-        self.open_button = ttk.Button(file_section, text="Open Directory", command=self.open_directory)
-        self.open_button.pack(fill=tk.X, pady=2)
+        self.prev_button = QPushButton('Previous Image', self)
+        self.prev_button.clicked.connect(self.show_previous_image)
+        self.button_layout.addWidget(self.prev_button)
 
-        nav_frame = ttk.Frame(file_section)
-        nav_frame.pack(fill=tk.X, pady=2)
-        self.prev_button = ttk.Button(nav_frame, text="Previous", command=self.previous_image)
-        self.prev_button.pack(side=tk.LEFT, expand=True, padx=2)
-        self.next_button = ttk.Button(nav_frame, text="Next", command=self.next_image)
-        self.next_button.pack(side=tk.LEFT, expand=True, padx=2)
+        self.next_button = QPushButton('Next Image', self)
+        self.next_button.clicked.connect(self.show_next_image)
+        self.button_layout.addWidget(self.next_button)
 
-        self.save_button = ttk.Button(file_section, text="Save", command=self.save_image)
-        self.save_button.pack(fill=tk.X, pady=2)
+        self.rotate_button = QPushButton('Rotate 90°', self)
+        self.rotate_button.clicked.connect(self.rotate_image)
+        self.button_layout.addWidget(self.rotate_button)
 
-        # Image controls section
-        image_section = ttk.LabelFrame(self.controls_frame, text="Image Controls", padding=5)
-        image_section.pack(fill=tk.X, padx=5, pady=5)
+        self.flip_button = QPushButton('Flip Horizontal', self)
+        self.flip_button.clicked.connect(self.flip_image)
+        self.button_layout.addWidget(self.flip_button)
 
-        transform_frame = ttk.Frame(image_section)
-        transform_frame.pack(fill=tk.X, pady=2)
-        self.rotate_button = ttk.Button(transform_frame, text="Rotate", command=self.rotate_image)
-        self.rotate_button.pack(side=tk.LEFT, expand=True, padx=2)
-        self.flip_button = ttk.Button(transform_frame, text="Flip", command=self.flip_image)
-        self.flip_button.pack(side=tk.LEFT, expand=True, padx=2)
+        self.save_button = QPushButton('Save Image', self)
+        self.save_button.clicked.connect(self.save_image)
+        self.button_layout.addWidget(self.save_button)
 
-        # Reset button
-        self.reset_button = ttk.Button(image_section, text="Reset", command=self.reset_edits)
-        self.reset_button.pack(fill=tk.X, pady=2)
+        self.apply_button = QPushButton('Apply Settings', self)
+        self.apply_button.clicked.connect(self.apply_settings)
+        self.button_layout.addWidget(self.apply_button)
 
-        # Adjustments section
-        adjust_section = ttk.LabelFrame(self.controls_frame, text="Adjustments", padding=5)
-        adjust_section.pack(fill=tk.X, padx=5, pady=5)
+        self.reset_button = QPushButton('Reset Edits', self)
+        self.reset_button.clicked.connect(self.reset_edits)
+        self.button_layout.addWidget(self.reset_button)
 
-        # Gamma control
-        ttk.Label(adjust_section, text="Gamma").pack(anchor=tk.W)
-        self.gamma_slider = ttk.Scale(adjust_section, from_=0.1, to=10.0, orient=tk.HORIZONTAL)
-        self.gamma_slider.set(4.0)
-        self.gamma_slider.pack(fill=tk.X, pady=(0, 5))
+        self.controls_layout.addLayout(self.button_layout)
 
-        # Exposure control
-        ttk.Label(adjust_section, text="Exposure").pack(anchor=tk.W)
-        self.exposure_slider = ttk.Scale(adjust_section, from_=0.5, to=3.0, orient=tk.HORIZONTAL)
-        self.exposure_slider.set(1.0)
-        self.exposure_slider.pack(fill=tk.X, pady=(0, 5))
+        # Sliders for adjustments
+        adjustments = [
+            ("Exposure", -3, 3),
+            ("Contrast", -1, 1),
+            ("Gamma", 0.1, 3),
+            ("White Balance", -1, 1),
+            ("Tint", -1, 1),
+            ("Vibrance", -1, 1),
+            ("Saturation", -1, 1),
+            ("Red", -1, 1),
+            ("Green", -1, 1),
+            ("Blue", -1, 1),
+            ("Vignetting", 0, 1),
+        ]
 
-        # Color balance section
-        color_section = ttk.LabelFrame(self.controls_frame, text="Color Balance", padding=5)
-        color_section.pack(fill=tk.X, padx=5, pady=5)
+        for name, min_val, max_val in adjustments:
+            slider_layout = QHBoxLayout()
+            label = QLabel(f"{name}:")
+            slider_layout.addWidget(label)
 
-        # Red balance
-        ttk.Label(color_section, text="Red").pack(anchor=tk.W)
-        self.r_slider = ttk.Scale(color_section, from_=0.5, to=2.0, orient=tk.HORIZONTAL)
-        self.r_slider.set(1.0)
-        self.r_slider.pack(fill=tk.X, pady=(0, 5))
+            slider = QSlider(Qt.Horizontal)
+            slider.setMinimum(int(min_val * 100))
+            slider.setMaximum(int(max_val * 100))
+            slider.setValue(100 if name == "Gamma" else 0)  # Set Gamma default to 1 (100 in scaled range)
+            slider.valueChanged.connect(lambda value, n=name: self.update_slider_value(n, value))
+            slider_layout.addWidget(slider)
 
-        # Green balance
-        ttk.Label(color_section, text="Green").pack(anchor=tk.W)
-        self.g_slider = ttk.Scale(color_section, from_=0.5, to=2.0, orient=tk.HORIZONTAL)
-        self.g_slider.set(1.0)
-        self.g_slider.pack(fill=tk.X, pady=(0, 5))
+            value_label = QLabel("0.0")
+            slider_layout.addWidget(value_label)
 
-        # Blue balance
-        ttk.Label(color_section, text="Blue").pack(anchor=tk.W)
-        self.b_slider = ttk.Scale(color_section, from_=0.5, to=2.0, orient=tk.HORIZONTAL)
-        self.b_slider.set(1.0)
-        self.b_slider.pack(fill=tk.X, pady=(0, 5))
+            self.sliders[name] = slider
+            self.slider_labels[name] = value_label
+            self.slider_values[name] = slider.value() / 100  # Store initial slider value
+            self.controls_layout.addLayout(slider_layout)
 
-        # Add slider update bindings
-        for slider in [self.gamma_slider, self.exposure_slider, 
-                      self.r_slider, self.g_slider, self.b_slider]:
-            slider.bind("<ButtonRelease-1>", self.update_image)
+        # Add stretch to push controls to the top
+        self.controls_layout.addStretch()
 
-    def _create_canvas(self):
-        # Create canvas with scrollbars
-        self.canvas = tk.Canvas(self.image_frame, bg="gray")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+    def update_slider_value(self, name, value):
+        """Update the slider value and its display label."""
+        scaled_value = value / 100
+        self.slider_values[name] = scaled_value
+        self.slider_labels[name].setText(f"{scaled_value:.2f}")
 
     def open_directory(self):
-        directory = filedialog.askdirectory()
+        directory = QFileDialog.getExistingDirectory(self, "Open Directory")
         if directory:
-            self.image_files = [os.path.join(directory, f) for f in os.listdir(directory) if f.lower().endswith((".cr2", ".cr3", ".dng"))]
-            self.current_index = 0
+            self.image_files = [os.path.join(directory, f) for f in os.listdir(directory) if f.lower().endswith(('.cr2', '.cr3', '.dng'))]
             if self.image_files:
-                self.load_image()
+                self.current_image_index = 0
+                self.load_image(self.image_files[self.current_image_index])
 
-    def load_image(self):
-        file_path = self.image_files[self.current_index]
-        self.current_image = self.read_raw_image(file_path)
-        self.reset_edits()  # Reset sliders and apply initial processing
-        self.display_image()
+    def load_image(self, file_path):
+        # Save current slider states for the current image (if any)
+        if self.current_image_index >= 0 and self.image_files:
+            self.image_slider_states[self.image_files[self.current_image_index]] = {
+                name: slider.value() for name, slider in self.sliders.items()
+            }
 
-    def read_raw_image(self, file_path):
-        import rawpy
-        with rawpy.imread(file_path) as raw:
-            return raw.postprocess()
+        # Load the new image
+        self.processor = NegativeImageProcessor(file_path)
+        self.processed_image = self.processor.process_raw_image_with_equalize()
+        self.original_processed_image = self.processed_image.copy()  # Store the original processed image
 
-    def invert_colors(self, image):
-        return 255 - image
-
-    def apply_initial_processing(self):
-        # Step 1: Apply histogram matching
-        self.base_adjusted_image = self.current_image.copy()
-        self.base_adjusted_image[:, :, 0] = match_histograms(self.current_image[:, :, 0], self.current_image[:, :, 1])
-        self.base_adjusted_image[:, :, 2] = match_histograms(self.current_image[:, :, 2], self.current_image[:, :, 1])
-        
-        # Step 2: Invert colors
-        self.base_adjusted_image = self.invert_colors(self.base_adjusted_image)
-        
-        # Step 3: Apply gamma correction to inverted image
-        gamma = self.gamma_slider.get()
-        self.base_adjusted_image = adjust_gamma(self.base_adjusted_image, gamma=gamma)
-
-        # Apply rotation and flip transformations
-        if self.rotation_count > 0:
-            self.base_adjusted_image = np.rot90(self.base_adjusted_image, k=self.rotation_count)
-        if self.is_flipped:
-            self.base_adjusted_image = np.fliplr(self.base_adjusted_image)
-
-    def apply_adjustments(self):
-        self.edited_image = self.base_adjusted_image.copy()
-        
-        # Apply color balance
-        r_balance = self.r_slider.get()
-        g_balance = self.g_slider.get()
-        b_balance = self.b_slider.get()
-        
-        self.edited_image[:,:,0] = np.clip(self.edited_image[:,:,0] * r_balance, 0, 255)
-        self.edited_image[:,:,1] = np.clip(self.edited_image[:,:,1] * g_balance, 0, 255)
-        self.edited_image[:,:,2] = np.clip(self.edited_image[:,:,2] * b_balance, 0, 255)
-
-        # Apply exposure adjustment
-        exposure = self.exposure_slider.get()
-        self.edited_image = np.clip(self.edited_image * exposure, 0, 255)
-
-    def update_image(self, event=None):
-        if self.current_image is not None:
-            if event and event.widget == self.gamma_slider:
-                self.apply_initial_processing()
-            self.apply_adjustments()
-            self.display_image()
-
-    def display_image(self):
-        # Get canvas dimensions
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        
-        if canvas_width <= 1:  # Canvas not yet realized
-            canvas_width = 800
-            canvas_height = 600
-
-        img = Image.fromarray(self.edited_image.astype(np.uint8))
-        
-        # Calculate scaling to fit canvas while maintaining aspect ratio
-        img_ratio = img.size[0] / img.size[1]
-        canvas_ratio = canvas_width / canvas_height
-        
-        if img_ratio > canvas_ratio:
-            new_width = canvas_width
-            new_height = int(canvas_width / img_ratio)
+        # Restore slider states if the image has been opened before
+        if file_path in self.image_slider_states:
+            for name, value in self.image_slider_states[file_path].items():
+                self.sliders[name].setValue(value)
+                self.update_slider_value(name, value)
         else:
-            new_height = canvas_height
-            new_width = int(canvas_height * img_ratio)
+            # Reset sliders to default values for new images
+            for name, slider in self.sliders.items():
+                slider.setValue(100 if name == "Gamma" else 0)
+                self.update_slider_value(name, slider.value())
 
-        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        self.tk_image = ImageTk.PhotoImage(img)
-        
-        # Clear previous image and create new one centered
-        self.canvas.delete("all")
-        self.canvas.create_image(
-            canvas_width//2, canvas_height//2,
-            image=self.tk_image,
-            anchor=tk.CENTER
-        )
+        self.display_image(self.processed_image)
 
-    def save_image(self):
-        file_path = self.image_files[self.current_index]
-        save_path = os.path.splitext(file_path)[0] + "_edited.jpg"
-        imsave(save_path, self.edited_image.astype(np.uint8))
+    def display_image(self, image):
+        # Scale the image to the range 0-255 and convert to uint8
+        scaled_image = (image * 255).astype(np.uint8)
 
-    def previous_image(self):
-        if self.current_index > 0:
-            self.current_index -= 1
-            self.load_image()
+        # Ensure the image is in RGB format (height, width, 3)
+        if scaled_image.ndim == 3 and scaled_image.shape[2] == 3:
+            height, width, channel = scaled_image.shape
+            bytes_per_line = 3 * width
 
-    def next_image(self):
-        if self.current_index < len(self.image_files) - 1:
-            self.current_index += 1
-            self.load_image()
+            # Convert the numpy array to a bytes object
+            image_data = scaled_image.tobytes()
+
+            # Create QImage from the bytes object
+            q_img = QImage(image_data, width, height, bytes_per_line, QImage.Format_RGB888)
+
+            # Scale the image to fit the QLabel while maintaining aspect ratio
+            pixmap = QPixmap.fromImage(q_img)
+            pixmap = pixmap.scaled(
+                self.image_label.width(), self.image_label.height(),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(pixmap)
+        else:
+            print("Error: Image is not in the expected RGB format.")
+
+    def show_previous_image(self):
+        if self.current_image_index > 0:
+            self.current_image_index -= 1
+            self.load_image(self.image_files[self.current_image_index])
+
+    def show_next_image(self):
+        if self.current_image_index < len(self.image_files) - 1:
+            self.current_image_index += 1
+            self.load_image(self.image_files[self.current_image_index])
 
     def rotate_image(self):
-        self.rotation_count = (self.rotation_count + 1) % 4
-        self.apply_initial_processing()
-        self.apply_adjustments()
-        self.display_image()
+        if self.processor and self.processed_image is not None:
+            self.processed_image = self.processor.rotate_image_90(self.processed_image)
+            self.display_image(self.processed_image)
 
     def flip_image(self):
-        self.is_flipped = not self.is_flipped
-        self.apply_initial_processing()
-        self.apply_adjustments()
-        self.display_image()
+        if self.processor and self.processed_image is not None:
+            self.processed_image = self.processor.flip_image_lr(self.processed_image)
+            self.display_image(self.processed_image)
+
+    def apply_settings(self):
+        if self.processor and self.original_processed_image is not None:
+            # Apply adjustments only for sliders that have changed
+            adjusted_image = self.original_processed_image.copy()
+            for name, value in self.slider_values.items():
+                if name == "Exposure":
+                    adjusted_image = self.processor.adjust_image_exposure(adjusted_image, value)
+                elif name == "Contrast":
+                    adjusted_image = self.processor.adjust_image_contrast(adjusted_image, value)
+                elif name == "Gamma":
+                    adjusted_image = self.processor.adjust_gamma(adjusted_image, value)
+                elif name == "White Balance":
+                    adjusted_image = self.processor.adjust_white_balance(adjusted_image, value)
+                elif name == "Tint":
+                    adjusted_image = self.processor.adjust_image_tint(adjusted_image, value)
+                elif name == "Vibrance":
+                    adjusted_image = self.processor.adjust_vibrance(adjusted_image, value)
+                elif name == "Saturation":
+                    adjusted_image = self.processor.adjust_saturation(adjusted_image, value)
+                elif name == "Red":
+                    adjusted_image = self.processor.adjust_red_channel(adjusted_image, value)
+                elif name == "Green":
+                    adjusted_image = self.processor.adjust_green_channel(adjusted_image, value)
+                elif name == "Blue":
+                    adjusted_image = self.processor.adjust_blue_channel(adjusted_image, value)
+                elif name == "Vignetting":
+                    adjusted_image = self.processor.apply_vignetting(adjusted_image, value)
+
+            # Update the processed_image and display it
+            self.processed_image = adjusted_image
+            self.display_image(self.processed_image)
 
     def reset_edits(self):
-        # Reset sliders to default values
-        self.gamma_slider.set(1.0)
-        self.exposure_slider.set(1.0)
-        self.r_slider.set(1.0)
-        self.g_slider.set(1.0)
-        self.b_slider.set(1.0)
+        """Reset the image to its original state and reset sliders to default values."""
+        if self.original_processed_image is not None:
+            self.processed_image = self.original_processed_image.copy()
+            self.display_image(self.processed_image)
 
-        # Reset rotation and flip state
-        self.rotation_count = 0
-        self.is_flipped = False
+            # Reset sliders to default values
+            for name, slider in self.sliders.items():
+                slider.setValue(100 if name == "Gamma" else 0)
+                self.update_slider_value(name, slider.value())
 
-        # Reapply initial processing and adjustments
-        self.apply_initial_processing()
-        self.apply_adjustments()
-        self.display_image()
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.geometry("1200x800")  # Set initial window size
-    app = ImageEditorApp(root)
-    root.mainloop()
+    def save_image(self):
+        if self.processed_image is not None:
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save Image", "", "PNG Files (*.png);;JPEG Files (*.jpg)")
+            if file_path:
+                from skimage.io import imsave
+                imsave(file_path, (self.processed_image * 255).astype(np.uint8))
+                
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    viewer = ImageViewer()
+    viewer.show()
+    sys.exit(app.exec_())
