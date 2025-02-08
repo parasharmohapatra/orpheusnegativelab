@@ -199,7 +199,7 @@ class ModernNegativeImageGUI(QMainWindow):
         slider_configs = {
             'R': (-0.5, 0.5, 0),
             'G': (-0.5, 0.5, 0),
-            'B': (-0.5, 0.5, -0.2),
+            'B': (-0.5, 0.5, -0.3),
             'Exposure': (-1, 1, 0),
             'Gamma': (0.1, 4, 2.2)
         }
@@ -507,7 +507,7 @@ class ModernNegativeImageGUI(QMainWindow):
         slider_configs = {  # Get your slider configurations
             'R': (-0.5, 0.5, 0),
             'G': (-0.5, 0.5, 0),
-            'B': (-0.5, 0.5, -0.2),
+            'B': (-0.5, 0.5, -0.3),
             'Exposure': (-1, 1, 0),
             'Gamma': (0.1, 4, 2.2)
         }
