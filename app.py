@@ -1,10 +1,10 @@
 import sys
 import os
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QLabel, QSlider, QFileDialog, 
-                            QScrollArea, QGroupBox, QStatusBar, QFrame)
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QIcon, QFont, QFontDatabase, QTransform
+                            QScrollArea, QGroupBox, QStatusBar, QFrame, QSizePolicy, QGridLayout)
+from PyQt5.QtCore import Qt, QSize, QTimer
+from PyQt5.QtGui import QPixmap, QImage, QIcon, QFont, QFontDatabase, QTransform
 import numpy as np
 from PIL import Image
 from neg_processor import NumbaOptimizedNegativeImageProcessor
@@ -118,7 +118,6 @@ class ModernNegativeImageGUI(QMainWindow):
         # Create sidebar
         # Sidebar with explicit text colors
         sidebar = QWidget()
-        sidebar.setFixedWidth(320)
         
         sidebar.setStyleSheet(f"""
             QWidget {{
@@ -131,7 +130,6 @@ class ModernNegativeImageGUI(QMainWindow):
         """)
         sidebar_layout = QVBoxLayout(sidebar)
          # Sidebar adjustments (more aesthetic)
-        sidebar.setFixedWidth(380)
         sidebar_layout.setContentsMargins(30, 30, 30, 30)
         sidebar_layout.setSpacing(24)
 
@@ -172,6 +170,7 @@ class ModernNegativeImageGUI(QMainWindow):
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet("background-color: #555555; height: 1px;")  # Thicker, lighter gray
         sidebar_layout.addWidget(separator)
+        sidebar_layout.setSpacing(12)
 
         # Adjustments Group (renamed and with better styling)
         adjustments_group = QGroupBox("")  # Renamed
@@ -192,7 +191,8 @@ class ModernNegativeImageGUI(QMainWindow):
             }
         """)
         # Create a layout for the adjustments group (important!)
-        adjustments_layout = QVBoxLayout()  # Or QHBoxLayout if you want horizontal layout
+        # Use QGridLayout for slider layout
+        adjustments_layout = QGridLayout()  # Use GridLayout
         adjustments_group.setLayout(adjustments_layout)
         # Create sliders
         self.sliders = {}
@@ -204,35 +204,33 @@ class ModernNegativeImageGUI(QMainWindow):
             'Gamma': (0.1, 4, 2.2)
         }
 
+        row = 0  # Row counter for grid layout
         for name, (min_val, max_val, default) in slider_configs.items():
-            slider_widget = QWidget()
-            slider_layout = QVBoxLayout(slider_widget)
-            slider_layout.setSpacing(4)
-            
-            header_layout = QHBoxLayout()
             label = QLabel(name)
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
             value_label = QLabel(f"{default:.2f}")
-            value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-            value_label.setStyleSheet(f"color: {'#555555'};")
-            
-            header_layout.addWidget(label)
-            header_layout.addWidget(value_label)
-            
+            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            value_label.setStyleSheet(f"color: {'#555555'}; font-size: 14px;")
+
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setMinimum(int(min_val * 100))
             slider.setMaximum(int(max_val * 100))
             slider.setValue(int(default * 100))
-            
-            slider.valueChanged.connect(lambda value, label=name: self.update_slider_label(label))
+
+            # Correctly connect the signal with a lambda function
+            slider.valueChanged.connect(lambda value, lbl=value_label: lbl.setText(f"{value / 100:.2f}"))
             slider.sliderReleased.connect(self.trigger_update)
-            
-            slider_layout.addLayout(header_layout)
-            slider_layout.addWidget(slider)
-            
-            self.sliders[name] = (slider, value_label)
-            adjustments_layout.addWidget(slider_widget)
+
+            adjustments_layout.addWidget(label, row, 0)
+            adjustments_layout.addWidget(slider, row, 1)
+            adjustments_layout.addWidget(value_label, row, 2)
+
+            self.sliders[name] = (slider, value_label)  # Store both slider and label
+            row += 1
 
         sidebar_layout.addWidget(adjustments_group)
+        sidebar_layout.setSpacing(8)
 
         # Rotate Button
         self.rotate_button = QPushButton("Rotate")
@@ -335,6 +333,8 @@ class ModernNegativeImageGUI(QMainWindow):
         content_layout = QVBoxLayout(content_widget)
         content_widget.setStyleSheet("background-color: white;")
         content_layout.setContentsMargins(20, 20, 20, 20)
+        layout.setStretchFactor(sidebar, 0)
+        layout.setStretchFactor(content_widget, 1)
         
         # Scroll area for image
         scroll_area = QScrollArea()
@@ -352,7 +352,7 @@ class ModernNegativeImageGUI(QMainWindow):
         self.setStatusBar(self.status_bar)
 
         # Set window size
-        self.resize(1400, 900)
+        self.showMaximized()
 
     def get_slider_values(self):
         return {
@@ -364,8 +364,7 @@ class ModernNegativeImageGUI(QMainWindow):
         }
 
     def update_slider_label(self, name):
-        slider, label = self.sliders[name]
-        label.setText(f"{slider.value() / 100:.2f}")
+        pass
 
     def trigger_update(self):
         self.update_timer.start(100)
@@ -478,29 +477,116 @@ class ModernNegativeImageGUI(QMainWindow):
                 values['gamma'], values['exposure']
             )
 
-            image = Image.fromarray((processed_image / 256).astype(np.uint8))
-            img_qt = QImage(image.tobytes(), image.width, image.height, QImage.Format.Format_RGB888)
-            pixmap = QPixmap.fromImage(img_qt)
+            # Add shape check
+            if processed_image.shape[0] == 0 or processed_image.shape[1] == 0:
+                self.status_bar.showMessage("Invalid image dimensions")
+                return
 
+            # Convert to 8-bit safely
+            processed_image = np.clip(processed_image / 256, 0, 255).astype(np.uint8)
+            
+            # Create PIL Image with error checking
+            try:
+                image = Image.fromarray(processed_image)
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+            except Exception as e:
+                self.status_bar.showMessage(f"Error converting image: {str(e)}")
+                return
+
+            # Create QImage with size checks
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                self.status_bar.showMessage("Invalid image dimensions")
+                return
+
+            # Use Format_RGB888 explicitly and verify bytes
+            img_bytes = image.tobytes()
+            if len(img_bytes) != width * height * 3:
+                self.status_bar.showMessage("Image data size mismatch")
+                return
+
+            img_qt = QImage(img_bytes, width, height, width * 3, QImage.Format.Format_RGB888)
+            if img_qt.isNull():
+                self.status_bar.showMessage("Failed to create QImage")
+                return
+
+            # Create pixmap with null check
+            pixmap = QPixmap.fromImage(img_qt)
+            if pixmap.isNull():
+                self.status_bar.showMessage("Failed to create QPixmap")
+                return
+
+            # Apply transformations safely
             transform = QTransform()
             transform.rotate(self.rotation_angle)
+            if self.flip_horizontal:
+                transform.scale(-1, 1)
 
-            if self.flip_horizontal:  # Apply flip if needed
-                transform.scale(-1, 1)  # Horizontal flip
+            rotated_pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+            if rotated_pixmap.isNull():
+                self.status_bar.showMessage("Failed to transform image")
+                return
 
-            rotated_pixmap = pixmap.transformed(transform)
+            # Scale with size checks
+            label_size = self.image_label.size()
+            if label_size.width() <= 0 or label_size.height() <= 0:
+                return
 
             scaled_pixmap = rotated_pixmap.scaled(
-                self.image_label.size(),
+                label_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
+
+            if scaled_pixmap.isNull():
+                self.status_bar.showMessage("Failed to scale image")
+                return
 
             self.image_label.setPixmap(scaled_pixmap)
 
         except Exception as e:
             self.status_bar.showMessage(f"Error displaying image: {str(e)}")
             self.image_label.clear()
+
+    def save_current_image(self):
+        if not self.processor or self.processor.current_rgb is None:
+            return
+
+        try:
+            positives_dir = os.path.join(self.directory_path, "positives")
+            os.makedirs(positives_dir, exist_ok=True)
+
+            current_file = self.processor.get_file_path(self.image_index)
+            if not current_file or not os.path.exists(current_file):
+                self.status_bar.showMessage("Invalid file path")
+                return
+
+            file_name = os.path.basename(current_file).lower()
+            for ext in [".cr2", ".cr3", ".raw", ".nef"]:
+                file_name = file_name.replace(ext, ".jpg")
+            
+            save_path = os.path.join(positives_dir, file_name)
+
+            processed_image = self.processor.current_rgb
+            if processed_image is None or processed_image.size == 0:
+                self.status_bar.showMessage("Invalid image data")
+                return
+
+            # Safe conversion to 8-bit
+            processed_image = np.clip(processed_image / 256, 0, 255).astype(np.uint8)
+            
+            try:
+                image = Image.fromarray(processed_image)
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                image.save(save_path, "JPEG", quality=95)
+                self.status_bar.showMessage(f"Saved image: {file_name}")
+            except Exception as e:
+                self.status_bar.showMessage(f"Error saving image: {str(e)}")
+
+        except Exception as e:
+            self.status_bar.showMessage(f"Error in save operation: {str(e)}")
 
     def reset_sliders(self):
         # Reset all sliders to their default values
@@ -519,36 +605,19 @@ class ModernNegativeImageGUI(QMainWindow):
 
         self.display_image() # Refresh the image to reflect the reset sliders
 
-    def save_current_image(self):
-        if not self.processor or self.processor.current_rgb is None:
-            return
-
-        positives_dir = os.path.join(self.directory_path, "positives")
-        os.makedirs(positives_dir, exist_ok=True)
-
-        file_name = os.path.basename(self.processor.get_file_path(self.image_index)).lower()
-        for ext in [".dng", ".cr2", ".cr3", ".raw", ".nef"]:
-            file_name = file_name.replace(ext, ".jpg")
-        save_path = os.path.join(positives_dir, file_name)
-
-        processed_image = self.processor.current_rgb
-        image = Image.fromarray((processed_image / 256).astype(np.uint8))
-        image.save(save_path, "JPEG", quality=95)
-        self.status_bar.showMessage(f"Saved image: {file_name}")
 
 def main():
     app = QApplication(sys.argv)
-    font = QFont('Roboto') # Use Noto Sans
+    font = QFont('Roboto')
     app.setFont(font)
 
-    if app.font().family() != 'Roboto': # Check if Noto Sans was loaded
+    if app.font().family() != 'Roboto':
         print("Roboto not found, using a fallback font.")
-        font = QFont('Arial')  # Fallback to Arial or another common font
+        font = QFont('Arial')
         app.setFont(font)
     else:
         app.setFont(font)
     
-    # Set the base style for the entire application
     app.setStyleSheet(f"""
         * {{
             color: #333333;
@@ -557,7 +626,11 @@ def main():
     
     window = ModernNegativeImageGUI()
     window.show()
-    sys.exit(app.exec())
+
+    app.exec() # Profile during app execution
+
+
+
 
 if __name__ == "__main__":
     main()
