@@ -134,7 +134,7 @@ class ModernNegativeImageGUI(QMainWindow):
         sidebar_layout.setSpacing(24)
 
         # Add a subtle background color to the sidebar
-        sidebar.setStyleSheet(f"background-color: {GRAY_BG};")  # Use your GRAY_BG color
+        sidebar.setStyleSheet(f"background-color: {'#fdf0e7'};")  # Use your GRAY_BG color
 
         # Dashboard title
         # Dashboard title and logo
