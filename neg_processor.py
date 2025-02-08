@@ -1,0 +1,162 @@
+import rawpy
+import numpy as np
+from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
+import os
+import numba
+from numba import njit, prange
+from PIL import Image
+import tkinter as tk
+from tkinter import ttk, filedialog
+
+class NegativeImageProcessor:
+    def __init__(self, directory_path, clip_percentage=0.001):
+        if not os.path.isdir(directory_path):
+            raise ValueError("Invalid directory path provided.")
+        self.directory_path = directory_path
+        self.file_paths = [os.path.join(self.directory_path, f) for f in os.listdir(self.directory_path) if os.path.isfile(os.path.join(self.directory_path, f))]
+        self.clip_percentage = clip_percentage
+        self.original_rgb = None  # Store the original RGB image
+        self.current_rgb = None # Store the currently processed RGB image
+
+    def get_file_path(self, index):
+        return self.file_paths[index]
+
+    def open_image(self, file_path):
+        if not os.path.isfile(file_path):
+            raise ValueError("Invalid file path provided.")
+        with rawpy.imread(file_path) as raw:
+            self.original_rgb = raw.postprocess(output_bps=16, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1))
+            self.current_rgb = self.original_rgb.copy() # Initialize current image
+
+        
+
+    def find_clipped_corners(self, hist, bins):
+        total_pixels = np.sum(hist)
+        clip_pixels = total_pixels * self.clip_percentage
+
+        cumulative = np.cumsum(hist)
+        left_idx = np.searchsorted(cumulative, clip_pixels)
+        right_idx = np.searchsorted(cumulative, total_pixels - clip_pixels)
+
+        left_idx = max(0, min(left_idx, len(bins) - 2))
+        right_idx = max(0, min(right_idx, len(bins) - 2))
+
+        left = bins[:-1][left_idx]
+        right = bins[:-1][right_idx]
+        return left, right
+
+    def create_tone_curve(self, left, right, adj_factor=0):
+        curve = np.zeros(65536, dtype=np.uint16)
+
+        if adj_factor == 0:
+            curve[:int(left)] = 65535
+            curve[int(right):] = 0
+            if int(right) > int(left):
+                curve[int(left):int(right)] = np.linspace(65535, 0, int(right) - int(left), endpoint=False)
+            return curve
+
+        mid = (left + right) / 2
+        y_mid = 65535 - ((mid - left) / (right - left)) * 65535
+        adjusted_y_mid = y_mid + adj_factor * 65535
+
+        curve[:int(left)] = 65535
+        curve[int(right):] = 0
+        if int(right) > int(left):
+            curve[int(left):int(mid)] = np.linspace(65535, adjusted_y_mid, int(mid) - int(left), endpoint=False)
+            curve[int(mid):int(right)] = np.linspace(adjusted_y_mid, 0, int(right) - int(mid), endpoint=False)
+
+        return curve
+
+    def adjust_exposure(self, image, exposure_adj=0):
+        if exposure_adj < -1 or exposure_adj > 1:
+            raise ValueError("Exposure adjustment must be between -1 and 1.")
+
+        factor = 2 ** exposure_adj
+        adjusted_image = np.clip(image * factor, 0, 65535).astype(np.uint16)
+        return adjusted_image
+
+    def adjust_gamma(self, image, gamma=1.0):
+        if gamma <= 0:
+            raise ValueError("Gamma value must be greater than 0.")
+
+        gamma_curve = np.linspace(0, 1, 65536) ** gamma
+        adjusted_image = (image * gamma_curve[image]).astype(np.uint16)
+        return adjusted_image
+
+    def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, gamma=1.0, exposure_adj=0):
+        if self.original_rgb is None:
+            raise ValueError("No image has been opened. Call open_image first.")
+
+        rgb_to_process = self.original_rgb.copy()
+
+        r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=256, range=(0, 65535))
+        g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=256, range=(0, 65535))
+        b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=256, range=(0, 65535))
+
+        r_left, r_right = self.find_clipped_corners(r_hist, r_bins)
+        g_left, g_right = self.find_clipped_corners(g_hist, g_bins)
+        b_left, b_right = self.find_clipped_corners(b_hist, b_bins)
+
+        r_curve = self.create_tone_curve(r_left, r_right, r_adj_factor)
+        g_curve = self.create_tone_curve(g_left, g_right, g_adj_factor)
+        b_curve = self.create_tone_curve(b_left, b_right, b_adj_factor)
+
+        adjusted_rgb = rgb_to_process.copy()
+        x = np.arange(65536)
+        adjusted_rgb[..., 0] = np.interp(rgb_to_process[..., 0], x, r_curve).astype(np.uint16)
+        adjusted_rgb[..., 1] = np.interp(rgb_to_process[..., 1], x, g_curve).astype(np.uint16)
+        adjusted_rgb[..., 2] = np.interp(rgb_to_process[..., 2], x, b_curve).astype(np.uint16)
+
+        adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
+        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma)
+
+        self.current_rgb = adjusted_rgb  # Update the current image
+
+        return adjusted_rgb
+
+
+class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
+    def __init__(self, directory_path, clip_percentage=0.001):
+        super().__init__(directory_path, clip_percentage)
+
+    @staticmethod
+    @njit(parallel=True)
+    def apply_tone_curve(image, tone_curve):
+        adjusted = np.zeros_like(image, dtype=np.uint16)
+        for i in prange(image.shape[0]):
+            for j in prange(image.shape[1]):
+                adjusted[i, j] = tone_curve[image[i, j]]
+        return adjusted
+    
+    def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, gamma=1.0, exposure_adj=0):
+        if self.original_rgb is None: #check if image is loaded
+            raise ValueError("No image has been opened. Call open_image first.")
+
+        rgb_to_process = self.original_rgb.copy()  # Process a copy, not the original
+
+        r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=128, range=(0, 65535))
+        g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
+        b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
+
+        r_left, r_right = self.find_clipped_corners(r_hist, r_bins)
+        g_left, g_right = self.find_clipped_corners(g_hist, g_bins)
+        b_left, b_right = self.find_clipped_corners(b_hist, b_bins)
+
+        r_curve = self.create_tone_curve(r_left, r_right, r_adj_factor)
+        g_curve = self.create_tone_curve(g_left, g_right, g_adj_factor)
+        b_curve = self.create_tone_curve(b_left, b_right, b_adj_factor)
+
+        adjusted_rgb = rgb_to_process.copy()
+        adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
+        adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
+        adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
+
+        adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
+        assert adjusted_rgb.dtype == np.uint16, "adjusted_rgb should be uint16"
+        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma)
+        assert adjusted_rgb.dtype == np.uint16, "adjusted_rgb should be uint16"
+
+        self.current_rgb = adjusted_rgb # Update the current image
+
+        return adjusted_rgb
