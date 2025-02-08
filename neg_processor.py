@@ -2,32 +2,17 @@ import rawpy
 import numpy as np
 import os
 from numba import njit, prange
+import time
 
 class NegativeImageProcessor:
-    def __init__(self, directory_path, clip_percentage=0.001):
-        if not os.path.isdir(directory_path):
-            raise ValueError("Invalid directory path provided.")
-        self.directory_path = directory_path
-        self.file_paths = [
-            os.path.join(self.directory_path, f)
-            for f in os.listdir(self.directory_path)
-            if os.path.isfile(os.path.join(self.directory_path, f))
-        ]
+    def __init__(self, clip_percentage=0.001):
         self.clip_percentage = clip_percentage
         self.original_rgb = None
         self.current_rgb = None
 
-    def get_file_path(self, index):
-        return self.file_paths[index]
-
-    def open_image(self, file_path):
-        if not os.path.isfile(file_path):
-            raise ValueError("Invalid file path provided.")
-        with rawpy.imread(file_path) as raw:
-            self.original_rgb = raw.postprocess(
-                output_bps=16, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1)
-            )
-            self.current_rgb = self.original_rgb.copy()
+    def open_image(self, image_data): # Accepts image data directly
+        self.original_rgb = image_data
+        self.current_rgb = image_data.copy()
 
     def find_clipped_corners(self, hist, bins):
         total_pixels = np.sum(hist)
@@ -83,6 +68,7 @@ class NegativeImageProcessor:
         if gamma <= 0:
             raise ValueError("Gamma value must be greater than 0.")
 
+        # Use jnp for JAX operations
         gamma_curve = np.linspace(0, 1, 65536)**gamma
         return (image * gamma_curve[image]).astype(np.uint16)
 
@@ -119,8 +105,8 @@ class NegativeImageProcessor:
 
 
 class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
-    def __init__(self, directory_path, clip_percentage=0.001):
-        super().__init__(directory_path, clip_percentage)
+    def __init__(self, clip_percentage=0.001):
+        super().__init__(clip_percentage)
 
     @staticmethod
     @njit(parallel=True)
@@ -154,9 +140,31 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
 
-        adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
+        #adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
         adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma)
 
         self.current_rgb = adjusted_rgb
 
         return adjusted_rgb
+
+class ImageFileManager:
+    def __init__(self, directory_path):
+        if not os.path.isdir(directory_path):
+            raise ValueError("Invalid directory path provided.")
+        self.directory_path = directory_path
+        self.file_paths = [
+            os.path.join(self.directory_path, f)
+            for f in os.listdir(self.directory_path)
+            if os.path.isfile(os.path.join(self.directory_path, f))
+        ]
+
+    def get_file_path(self, index):
+        return self.file_paths[index]
+
+    def load_image(self, file_path):
+        if not os.path.isfile(file_path):
+            raise ValueError("Invalid file path provided.")
+        with rawpy.imread(file_path) as raw:
+            return raw.postprocess(
+                output_bps=16, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1)
+            )
