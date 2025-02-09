@@ -1,0 +1,6 @@
+jax
+numba
+numpy
+Pillow
+PyQt5
+rawpy

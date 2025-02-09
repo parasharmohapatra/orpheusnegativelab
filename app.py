@@ -60,7 +60,7 @@ class ImageSaverThread(QThread):
             else:
                 flipped_image = rotated_image
 
-            flipped_image.save(self.save_path, "JPEG", quality=95)
+            flipped_image.save(self.save_path, "JPEG", quality=100)
             self.finished_saving.emit(self.save_path)
         except Exception as e:
             self.error_saving.emit(str(e))
@@ -207,7 +207,7 @@ class ModernNegativeImageGUI(QMainWindow):
                 color: {TEXT_COLOR};
                 font-size: 28px;
                 font-weight: 600;
-                padding: 18px 0;
+                padding: 14px 26px;
             }}
         """)
         sidebar_layout.addWidget(title_label)
@@ -261,10 +261,10 @@ class ModernNegativeImageGUI(QMainWindow):
         self.sliders = {}
         slider_configs = {
             'R': (-0.5, 0.5, 0),
-            'G': (-0.5, 0.5, 0),
+            'G': (-0.5, 0.5, -0.15),
             'B': (-0.5, 0.5, -0.3),
             'Exposure': (-1, 1, 0),
-            'Gamma': (0.1, 4, 2.2)
+            'Gamma': (0.1, 4, 1)
         }
 
         row = 0  # Row counter for grid layout
@@ -634,10 +634,10 @@ class ModernNegativeImageGUI(QMainWindow):
         # Reset all sliders to their default values
         slider_configs = {  # Get your slider configurations
             'R': (-0.5, 0.5, 0),
-            'G': (-0.5, 0.5, 0),
+            'G': (-0.5, 0.5, -0.15),
             'B': (-0.5, 0.5, -0.3),
             'Exposure': (-1, 1, 0),
-            'Gamma': (0.1, 4, 2.2)
+            'Gamma': (0.1, 4, 1)
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
