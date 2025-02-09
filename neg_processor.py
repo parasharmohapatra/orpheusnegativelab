@@ -3,6 +3,9 @@ import numpy as np
 import os
 from numba import njit, prange
 import time
+import jax.numpy as jnp
+from jax import jit
+from jax import lax
 
 class NegativeImageProcessor:
     def __init__(self, clip_percentage=0.001):
@@ -57,20 +60,25 @@ class NegativeImageProcessor:
 
         return curve
 
-    def adjust_exposure(self, image, exposure_adj=0):
-        if not -1 <= exposure_adj <= 1:
-            raise ValueError("Exposure adjustment must be between -1 and 1.")
+    @staticmethod
+    @jit
+    def adjust_exposure(image, exposure_adj):
+        factor = 2 ** exposure_adj
+        max_val = 65535
 
-        factor = 2**exposure_adj
-        return np.clip(image * factor, 0, 65535).astype(np.uint16)
-
-    def adjust_gamma(self, image, gamma=1.0):
-        if gamma <= 0:
-            raise ValueError("Gamma value must be greater than 0.")
-
-        # Use jnp for JAX operations
-        gamma_curve = np.linspace(0, 1, 65536)**gamma
-        return (image * gamma_curve[image]).astype(np.uint16)
+        # Apply exposure adjustment
+        adjusted = jnp.clip(image * factor, 0, max_val)
+        return adjusted.astype(jnp.uint16)
+    
+    @staticmethod
+    @jit
+    def adjust_gamma(image, gamma):
+        inv_gamma = 1.0 / gamma
+        max_val = 65535
+    
+        # Normalize, apply gamma correction, and scale back using lax operations
+        adjusted = lax.pow(image / max_val, inv_gamma) * max_val
+        return adjusted.astype(jnp.uint16)
 
     def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, gamma=1.0, exposure_adj=0):
         if self.original_rgb is None:
@@ -116,7 +124,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
             for j in prange(image.shape[1]):
                 adjusted[i, j] = tone_curve[image[i, j]]
         return adjusted
-
+    
     def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, gamma=1.0, exposure_adj=0):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
@@ -140,7 +148,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
 
-        #adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
+        adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
         adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma)
 
         self.current_rgb = adjusted_rgb

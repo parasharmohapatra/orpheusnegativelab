@@ -1,0 +1,28 @@
+{
+  "window_title": "Orpheus Negative Lab",
+  "base": {
+    "text_color": "#333",
+    "font_family": "Roboto"
+  },
+  "QMainWindow": "background-color: #FFFFFF;",
+  "sidebar": "background-color: #fdf0e7;",
+  "dashboard_title_text": "Orpheus Negative Lab",
+  "dashboard_title": "color: #333; font-size: 28px; font-weight: 600; padding: 18px 0;",
+  "open_button_text": "Open Directory",
+  "open_button": "border: 1px solid #D3D3D3; border-radius: 8px; padding: 10px 20px;",
+  "separator": "background-color: #555555; height: 1px;",
+  "adjustments_group_text": "",
+  "adjustments_group": "border: none; margin-top: 5px; font-weight: 500; padding: 12px; font-size: 18px;",
+  "slider_label": "",
+  "slider_value_label": "color: #555555; font-size: 14px;",
+  "rotate_button_text": "Rotate",
+  "rotate_button": "border: 1px solid #D3D3D3; border-radius: 8px; padding: 8px 16px; color: #555; font-size: 14px;",
+  "flip_button_text": "Flip",
+  "flip_button": "border: 1px solid #D3D3D3; border-radius: 8px; padding: 8px 16px; color: #555; font-size: 14px;",
+  "reset_button_text": "Reset Adjustments",
+  "reset_button": "border: 1px solid #D3D3D3; border-radius: 8px; padding: 8px 22px; color: #555; font-size: 14px;",
+  "prev_button_text": "Previous",
+  "next_button_text": "Next",
+  "nav_button": "border: 1px solid #D3D3D3; border-radius: 8px; padding: 8px 16px; color: #555; font-size: 14px;",
+  "content_widget": "background-color: white;"
+}

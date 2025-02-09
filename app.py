@@ -175,9 +175,8 @@ class ModernNegativeImageGUI(QMainWindow):
         self.raw_file_paths = [] # List to store only raw file paths
         self.image_saver_thread = None # Add the saver thread attribute
         self.image_loader_thread = None  # Add thread attribute
+        self.processed_pixmap = None  # Store the processed pixmap
         self.progress_bar = QProgressBar()  # Create progress bar
-        
-
 
         # Create sidebar
         # Sidebar with explicit text colors
@@ -512,15 +511,39 @@ class ModernNegativeImageGUI(QMainWindow):
 
     def rotate_image(self):
         self.rotation_angle = (self.rotation_angle - 90) % 360
-        self.display_image()
+        self.transform_and_display()  # Call transform_and_display
 
     def flip_image(self):
-        self.flip_horizontal = not self.flip_horizontal  # Toggle flip state
-        self.display_image()
+        self.flip_horizontal = not self.flip_horizontal
+        self.transform_and_display()  # Call transform_and_display
+
+    def transform_and_display(self):  # New function for transformation
+        if self.processed_pixmap is None:  # Check if pixmap exists
+            return
+
+        transform = QTransform()
+        transform.rotate(self.rotation_angle)
+        if self.flip_horizontal:
+            transform.scale(-1, 1)
+
+        rotated_pixmap = self.processed_pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)  # Transform existing pixmap
+
+        label_size = self.image_label.size()
+        if label_size.width() <= 0 or label_size.height() <= 0:
+            return
+
+        scaled_pixmap = rotated_pixmap.scaled(
+            label_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+        self.image_label.setPixmap(scaled_pixmap)
 
     def display_image(self):
         if not self.file_manager or not self.image_processor or self.image_processor.current_rgb is None:
             self.image_label.clear()
+            self.processed_pixmap = None  # Reset pixmap
             return
 
         try:
@@ -533,23 +556,22 @@ class ModernNegativeImageGUI(QMainWindow):
             if processed_image is None or processed_image.size == 0:
                 self.status_bar.showMessage("Invalid image data")
                 self.image_label.clear()
+                self.processed_pixmap = None  # Reset pixmap
                 return
 
-            # *** CORRECTED IMAGE CONVERSION ***
-            # 1. Scale to 0-255 and convert to uint8
             processed_image = np.clip(processed_image / 256, 0, 255).astype(np.uint8)
 
-            # 2. Convert to QImage (handling different image formats)
             height, width, channels = processed_image.shape
-            bytesPerLine = processed_image.strides[0]  # Important for correct stride
+            bytesPerLine = processed_image.strides[0]
 
-            if channels == 3:  # RGB image
+            if channels == 3:
                 format = QImage.Format_RGB888
-            elif channels == 4:  # RGBA image (if your processor outputs RGBA)
+            elif channels == 4:
                 format = QImage.Format_RGBA8888
             else:
                 self.status_bar.showMessage("Unsupported image format")
                 self.image_label.clear()
+                self.processed_pixmap = None  # Reset pixmap
                 return
 
             img_qt = QImage(processed_image.data, width, height, bytesPerLine, format)
@@ -557,6 +579,7 @@ class ModernNegativeImageGUI(QMainWindow):
             if img_qt.isNull():
                 self.status_bar.showMessage("Failed to create QImage")
                 self.image_label.clear()
+                self.processed_pixmap = None  # Reset pixmap
                 return
 
             pixmap = QPixmap.fromImage(img_qt)
@@ -564,41 +587,18 @@ class ModernNegativeImageGUI(QMainWindow):
             if pixmap.isNull():
                 self.status_bar.showMessage("Failed to create QPixmap")
                 self.image_label.clear()
+                self.processed_pixmap = None  # Reset pixmap
                 return
 
-            transform = QTransform()
-            transform.rotate(self.rotation_angle)
-            if self.flip_horizontal:
-                transform.scale(-1, 1)
+            self.processed_pixmap = pixmap  # Store the pixmap
 
-            rotated_pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
-
-            if rotated_pixmap.isNull():
-                self.status_bar.showMessage("Failed to transform image")
-                self.image_label.clear()
-                return
-
-            label_size = self.image_label.size()
-            if label_size.width() <= 0 or label_size.height() <= 0:
-                return  # Handle invalid size (don't clear label)
-
-            scaled_pixmap = rotated_pixmap.scaled(
-                label_size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-
-            if scaled_pixmap.isNull():
-                self.status_bar.showMessage("Failed to scale image")
-                self.image_label.clear()
-                return
-
-            self.image_label.setPixmap(scaled_pixmap)
+            self.transform_and_display()  # Call transform_and_display to apply initial transform and display
 
         except Exception as e:
             self.status_bar.showMessage(f"Error displaying image: {str(e)}")
-            print(f"Display Error: {e}")  # Print detailed error for debugging
+            print(f"Display Error: {e}")
             self.image_label.clear()
+            self.processed_pixmap = None  # Reset pixmap
 
     def save_current_image(self):
         if not self.file_manager or not self.image_processor or self.image_processor.current_rgb is None or self.current_image_path is None:
