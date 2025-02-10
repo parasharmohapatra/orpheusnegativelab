@@ -32,8 +32,9 @@ There are two main ways to install Orpheus Negative Lab: using Git (recommended)
 
 1. **Clone the repository:** Open your terminal or command prompt and navigate to the directory where you want to store the project. Then, run the following command:
 
-   ```bash
-   git clone https://github.com/parasharmohapatra/orpheusnegativelab.git
+```bash
+git clone https://github.com/parasharmohapatra/orpheusnegativelab.git
+```
 
 This will create a folder named OrpheusNegativeLab containing the project files.
 
@@ -109,6 +110,9 @@ This will start Orpheus Negative Lab.
 I've found most of the time, the RGB values need to change by a bit to get the perfect white balance. Gamma and exposure are typically dependent on personal preference.
 
 3. Navigate images: Use the "Previous" and "Next" buttons to move between images in the loaded directory.
+
 4. Rotate and Flip: Use the "Rotate" and "Flip" buttons to transform the current image.
+
 5. Save: Processed images are automatically saved as JPEGs in a "positives" subdirectory within the selected directory when you navigate to the next or previous image.
+
 6. Reset Adjustments: Click the "Reset Adjustments" button to return all the sliders to their default values.
