@@ -41,7 +41,7 @@ This will create a folder named OrpheusNegativeLab containing the project files.
 2. Navigate to the project directory:
 
 ```bash
-cd OrpheusNegativeLab
+cd orpheusnegativelab
 ```
 
 3. Create a virtual environment (highly recommended):  Virtual environments isolate project dependencies and prevent conflicts with other Python projects.
