@@ -6,7 +6,7 @@ Convert c41 negatives into positive images. Tries to produce similar results to 
 
 * **RAW File Support:** Loads and processes various RAW file formats (e.g., .cr2, .cr3, .raw, .nef).
 * **Real-time Adjustments:** Interactive sliders for adjusting Red, Green, Blue channels, Exposure, and Gamma.
-* **Rotation and Flipping:** Rotate images 90 degrees clockwise and flip horizontally.
+* **Rotation and Flipping:** Rotate images 90 degrees counter-clockwise and flip (left-right).
 * **Image Navigation:** Easily navigate between images in a directory.
 * **Saving Processed Images:** Saves the processed images as high-quality JPEGs in a "positives" subdirectory.
 * **Modern UI:** Clean and intuitive user interface.
@@ -98,7 +98,7 @@ python main.py
 ```
 This will start Orpheus Negative Lab.
 
-#### Using the Software
+### 3. Using the Software
 1. Open a directory: Click the "Open Directory" button and select the directory containing your RAW files. Make sure these are the correct RAW files your camera uses.
 
 2. I've tried to make the default processing done image provide reasonable outputs (this is also a work in progress so I'll try to keep making it better). However, everyone's style is different so here's how you can use the sliders to achieve your desired looks:
