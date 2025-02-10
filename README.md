@@ -100,7 +100,7 @@ python main.py
 This will start Orpheus Negative Lab.
 
 ### 3. Using the Software
-1. Open a directory: Click the "Open Directory" button and select the directory containing your RAW files. Make sure these are the correct RAW files your camera uses.
+1. Open a directory: Click the "Open Directory" button and select the directory containing your RAW negatives. Make sure these are the correct RAW files your camera uses.
 
 2. I've tried to make the default processing done image provide reasonable outputs (this is also a work in progress so I'll try to keep making it better). However, everyone's style is different so here's how you can use the sliders to achieve your desired looks:
  - Lowering R will make the image more cyan. Increasing it will make it more red.
