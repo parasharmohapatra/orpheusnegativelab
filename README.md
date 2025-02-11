@@ -125,13 +125,9 @@ The image processing algorithm is relatively simple. It performs the following c
 1. Gets the histogram for each color channel
 2. Finds the corners of each histogram
 3. creates a point curve of the following form:
-$$
-y = \left\{ \begin{array}{cl}
-65535 & : \ x \leq L \\
-linearly \:\:decreasing & : \ L< x< R \\
-0 & : \ x \geq R \\
-\end{array} \right.
-$$
+
+<img src="https://latex.codecogs.com/svg.image?\bg{white}&space;y=\left\{\begin{array}{cl}65535&:\;x\leq&space;L\\linearly\:\:decreasing&:\;L<x<R\\0&:\;x\geq&space;R\\\end{array}\right.">
+
 where L = the left corner of the histogram and R = right corner of the histogram. 
 4. Applies the point curve to the image
 5. Applies the exposure and gamma adjustment to the image
