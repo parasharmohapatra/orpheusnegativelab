@@ -27,7 +27,7 @@ Before you begin, ensure you have the following installed:
 
 ### 2. Installation
 
-There are two main ways to install Orpheus Negative Lab: using Git (recommended) or downloading a ZIP archive.
+There are two main ways to install Orpheus Negative Lab: using Git (recommended) or downloading a ZIP archive. I highly recommend using a virtual environment. 
 
 #### Method 1: Using Git (Recommended)
 
@@ -45,30 +45,7 @@ This will create a folder named OrpheusNegativeLab containing the project files.
 cd orpheusnegativelab
 ```
 
-3. Create a virtual environment (highly recommended):  Virtual environments isolate project dependencies and prevent conflicts with other Python projects.
-
-```bash
-python3 -m venv .venv        # Creates a virtual environment named ".venv"
-```
-
-Activate the virtual environment:
-
-Linux/macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-Windows:
-```bash
-.venv\Scripts\activate
-```
-
-4. You should see the name of the virtual environment (e.g., .venv) in parentheses at the beginning of your terminal prompt, indicating that it's active.
-
-Install the required packages:  It's essential to install the necessary Python packages.  
-
-Run the following command in your terminal (make sure your virtual environment is active):
+3. Run the following command in your terminal (make sure your virtual environment is active):
 
 ```bash
 pip install -r requirements.txt
@@ -82,20 +59,16 @@ This will install all the required libraries.
 
 2. Navigate to the project directory: Open your terminal or command prompt and navigate to the extracted directory.
 
-3. Create and activate a virtual environment: Follow steps 3 and 4 from the Git method above.
-
-4. Install the required packages: Follow step 5 from the Git method above.
+3. Install the required packages: Follow step 3 from the Git method above.
 
 
 #### Running the Application
-Once you have installed the dependencies, you can run the application:
+Once you have installed the dependencies, you can run the application: 
 
-Activate your virtual environment (if you created one):  (See step 4 in the installation instructions.)
-
-Run the application:
+Run the application (after activating your virtual environment if you created one)::
 
 ```bash
-python main.py
+python app.py
 ```
 This will start Orpheus Negative Lab.
 
