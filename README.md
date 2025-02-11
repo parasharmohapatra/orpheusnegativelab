@@ -1,7 +1,7 @@
 # Orpheus Negative Lab - Process Film Negatives
 
 Convert c41 negatives into positive images. Tries to produce similar results to Lightroom Classic + Negative Lab Pro.
-![Demo](demo.png)
+![Demo](data/demo.png)
 
 ## Features
 
@@ -117,3 +117,38 @@ I've found most of the time, the RGB values need to change by a bit to get the p
 5. Save: Processed images are automatically saved as JPEGs in a "positives" subdirectory within the selected directory when you navigate to the next or previous image.
 
 6. Reset Adjustments: Click the "Reset Adjustments" button to return all the sliders to their default values.
+
+### 4. How Does it Work?
+
+The image processing algorithm is relatively simple. It performs the following computations:
+
+1. Gets the histogram for each color channel
+2. Finds the corners of each histogram
+3. creates a point curve of the following form:
+$$
+y = \left\{ \begin{array}{cl}
+65535 & : \ x \leq L \\
+linearly \:\:decreasing & : \ L< x< R \\
+0 & : \ x \geq R \\
+\end{array} \right.
+$$
+where L = the left corner of the histogram and R = right corner of the histogram. 
+4. Applies the point curve to the image
+5. Applies the exposure and gamma adjustment to the image
+
+![Histogram](data/histogram.png)
+
+In general, this works quite well. However, at this stage, there still is a blue/cyan cast left over on the image. This this why the default values of the G and B sliders are -0.15 and -0.3 respectively. These values have shown to get the image to a better starting point. Eventually, I will come up with an algorithm to auto-correct white balance. 
+
+##### Before G-B Adjustment
+![Color Adjusted Processed](data/processed_default.png)
+
+##### After G-B Adjustment
+![Color Adjusted Processed](data/processed_color_adjusted.png)
+
+The sliders change the shape of the linear portion of the point curve by finding the center point of the linear region and moving that point up and down. Then a linear interpolation gives us the new tone curve. This a pretty rudimentry implementation of a point curve but it works quite well. 
+![Modified Point Curve (Green Chanel)](data/green_adjusted.png)
+
+ This a pretty rudimentry implementation of a point curve but it works quite well. The priority was to have a single slider for each color channel to keep things simple. When I figure out something that works better, I'll update the software with those changes! The priority for version 1 was to have something that works fast and is easy to use. 
+
+ 
