@@ -145,6 +145,6 @@ In general, this works quite well. However, at this stage, there still is a blue
 The sliders change the shape of the linear portion of the point curve by finding the center point of the linear region and moving that point up and down. Then a linear interpolation gives us the new tone curve. This a pretty rudimentry implementation of a point curve but it works quite well. 
 ![Modified Point Curve (Green Chanel)](data/green_adjusted.png)
 
- This a pretty rudimentry implementation of a point curve but it works quite well. The priority was to have a single slider for each color channel to keep things simple. When I figure out something that works better, I'll update the software with those changes! The priority for version 1 was to have something that works fast and is easy to use. 
+ This a pretty rudimentry implementation of a point curve but it works quite well. I'm working on an better point curve implementation and I'll update the software with those changes when they are ready! The priority for version 1 was to have something that works fast and is easy to use.
 
  
