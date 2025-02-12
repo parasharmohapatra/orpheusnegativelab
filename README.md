@@ -79,10 +79,7 @@ This will start Orpheus Negative Lab.
  - Lowering R will make the image more cyan. Increasing it will make it more red.
  - Lowering G will make the image more magenta. Increasing it will make it more green. 
  - Lowering B will make the image more yellow. Increasing it will make it more blue. 
- - Brightness 
- - Contrast
- - Highlights
- - Shadows
+ - Brightness, Contrast, Highlights and Shadows work similar to what you'd expect. 
 
 3. Navigate images: Use the "Previous" and "Next" buttons to move between images in the loaded directory.
 
@@ -98,12 +95,11 @@ The image processing algorithm is relatively simple. It performs the following c
 
 1. Gets the histogram for each color channel
 2. Finds the corners of each histogram
+![Histogram](data/histogram.png)
 3. creates a point curve of the following forms:
 ![Tone Curves](data/tone_curves_adjustment_factors.png)
 4. Applies the point curve to the image
 5. Applies the brightness, contrast, shadows and highlights adjustments
-
-![Histogram](data/histogram.png)
 
 In general, the default setting work quite well. However, the image white balance can be further adjusted using the R, G, B sliders. I will come up with an algorithm to auto-correct white balance. 
 
