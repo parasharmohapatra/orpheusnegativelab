@@ -79,9 +79,10 @@ This will start Orpheus Negative Lab.
  - Lowering R will make the image more cyan. Increasing it will make it more red.
  - Lowering G will make the image more magenta. Increasing it will make it more green. 
  - Lowering B will make the image more yellow. Increasing it will make it more blue. 
- - Exposure slider increases/decreases the intensity of all the pixels in an image by the same amount. 
- - Gamma slider can be used to adjust contrast. (a bit of an oversimplification of what gamma adjustment does)
-I've found most of the time, the RGB values need to change by a bit to get the perfect white balance. Gamma and exposure are typically dependent on personal preference.
+ - Brightness 
+ - Contrast
+ - Highlights
+ - Shadows
 
 3. Navigate images: Use the "Previous" and "Next" buttons to move between images in the loaded directory.
 
@@ -97,27 +98,17 @@ The image processing algorithm is relatively simple. It performs the following c
 
 1. Gets the histogram for each color channel
 2. Finds the corners of each histogram
-3. creates a point curve of the following form:
-
-<img src="https://latex.codecogs.com/svg.image?\bg{white}&space;y=\left\{\begin{array}{cl}65535&:\;x\leq&space;L\\linearly\:\:decreasing&:\;L<x<R\\0&:\;x\geq&space;R\\\end{array}\right.">
-
-where L = the left corner of the histogram and R = right corner of the histogram. 
+3. creates a point curve of the following forms:
+![Tone Curves](data/tone_curves_adjustment_factors.png)
 4. Applies the point curve to the image
-5. Applies the exposure and gamma adjustment to the image
+5. Applies the brightness, contrast, shadows and highlights adjustments
 
 ![Histogram](data/histogram.png)
 
-In general, this works quite well. However, at this stage, there still is a blue/cyan cast left over on the image. This this why the default values of the G and B sliders are -0.15 and -0.3 respectively. These values have shown to get the image to a better starting point. Eventually, I will come up with an algorithm to auto-correct white balance. 
+In general, the default setting work quite well. However, the image white balance can be further adjusted using the R, G, B sliders. I will come up with an algorithm to auto-correct white balance. 
 
-##### Before G-B Adjustment
-![Color Adjusted Processed](data/processed_default.png)
-
-##### After G-B Adjustment
 ![Color Adjusted Processed](data/processed_color_adjusted.png)
 
-The sliders change the shape of the linear portion of the point curve by finding the center point of the linear region and moving that point up and down. Then a linear interpolation gives us the new tone curve. This a pretty rudimentry implementation of a point curve but it works quite well. 
-![Modified Point Curve (Green Chanel)](data/green_adjusted.png)
 
- This a pretty rudimentry implementation of a point curve but it works quite well. I'm working on an better point curve implementation and I'll update the software with those changes when they are ready! The priority for version 1 was to have something that works fast and is easy to use.
 
  
