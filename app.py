@@ -286,11 +286,13 @@ class ModernNegativeImageGUI(QMainWindow):
         # Create sliders
         self.sliders = {}
         slider_configs = {
-            'R': (-0.5, 0.5, 0),
-            'G': (-0.5, 0.5, -0.15),
-            'B': (-0.5, 0.5, -0.3),
-            'Exposure': (-1, 1, 0),
-            'Gamma': (0.1, 4, 1)
+            'R': (-1, 1, 0),
+            'G': (-1, 1, -0.1),
+            'B': (-1, 1, -0.2),
+            'Brightness': (-1, 1, 0),
+            'Contrast': (0, 2, 1), 
+            'Highlights': (-0.5, 0.5, 0),
+            'Shadows': (-0.5, 0.5, 0),
         }
 
         row = 0  # Row counter for grid layout
@@ -450,8 +452,10 @@ class ModernNegativeImageGUI(QMainWindow):
             'r_adjust': self.sliders['R'][0].value() / 100,
             'g_adjust': self.sliders['G'][0].value() / 100,
             'b_adjust': self.sliders['B'][0].value() / 100,
-            'exposure': self.sliders['Exposure'][0].value() / 100,
-            'gamma': self.sliders['Gamma'][0].value() / 100
+            'brightness': self.sliders['Brightness'][0].value() / 100,
+            'contrast': self.sliders['Contrast'][0].value() / 100, 
+            'highlights': self.sliders['Highlights'][0].value() / 100,
+            'shadows': self.sliders['Shadows'][0].value() / 100,
         }
 
     def update_slider_label(self, name):
@@ -576,7 +580,7 @@ class ModernNegativeImageGUI(QMainWindow):
             values = self.get_slider_values()
             processed_image = self.image_processor.process_image(
                 values['r_adjust'], values['g_adjust'], values['b_adjust'],
-                values['gamma'], values['exposure']
+                values['brightness'], values['contrast'], values['highlights'], values['shadows']
             )
 
             if processed_image is None or processed_image.size == 0:
@@ -659,11 +663,13 @@ class ModernNegativeImageGUI(QMainWindow):
     def reset_sliders(self):
         # Reset all sliders to their default values
         slider_configs = {  # Get your slider configurations
-            'R': (-0.5, 0.5, 0),
-            'G': (-0.5, 0.5, -0.15),
-            'B': (-0.5, 0.5, -0.3),
-            'Exposure': (-1, 1, 0),
-            'Gamma': (0.1, 4, 1)
+            'R': (-1, 1, 0),
+            'G': (-1, 1, -0.1),
+            'B': (-1, 1, -0.2),
+            'Brightness': (-1, 1, 0),
+            'Contrast': (0, 2, 1), 
+            'Highlights': (-0.5, 0.5, 0),
+            'Shadows': (-0.5, 0.5, 0),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
