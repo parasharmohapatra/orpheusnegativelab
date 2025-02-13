@@ -28,8 +28,11 @@ Before you begin, ensure you have the following installed:
 ### 2. Installation
 
 There are two main ways to install Orpheus Negative Lab: using Git (recommended) or downloading a ZIP archive. I highly recommend using a virtual environment. 
+#### Method 1: Use the .DMG installer (easiest)
+##### Disclaimer: This .dmg is just something I put together for convenience. You'll likely get a security warning that you will have to change security permissions for. Do you own research before you proceed. I bear no responsibility if something goes wrong. 
+There is one weird quirk of the app. It crashes the first time you open it. The second time you open it, it'll work fine (although it takes a few seconds to load). I don't know why. That being said, it is still the most convenient to use the app. If you don't want to deal with it, use Method 2 or 3
 
-#### Method 1: Using Git (Recommended)
+#### Method 2: Using Git 
 
 1. **Clone the repository:** Open your terminal or command prompt and navigate to the directory where you want to store the project. Then, run the following command:
 
@@ -53,7 +56,7 @@ pip install -r requirements.txt
 
 This will install all the required libraries.
 
-#### Method 2: Downloading a ZIP Archive
+#### Method 3: Downloading a ZIP Archive
 
 1. Download the ZIP file. Extract the ZIP file: Extract the downloaded ZIP file to the directory where you want to store the project.
 
