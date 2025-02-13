@@ -103,7 +103,7 @@ class NegativeImageProcessor:
         # Apply adjustment factor
         if adj_factor != 0:
             adjusted_mid = mid + adj_factor * width
-            s_curve = expit((x - adjusted_mid) / (width / 8))
+            s_curve = expit((x - adjusted_mid) / (width / 4))
             s_curve = (s_curve - s_curve.min()) / (s_curve.max() - s_curve.min())
             s_curve = 65535 - (s_curve * 65535).astype(np.uint16)
     
@@ -213,7 +213,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         return adjusted
     
     # Update the process_image method in the NumbaOptimizedNegativeImageProcessor class to include highlights and shadows adjustments
-    def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, brightness_adj=0, contrast_adj=1.0, highlight_adj=0.0, shadow_adj=0.0):
+    def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, brightness_adj=0, gamma_adj=1.0, highlight_adj=0.0, shadow_adj=0.0):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 
@@ -227,9 +227,9 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         g_left, g_right = self.find_clipped_corners(g_hist, g_bins)
         b_left, b_right = self.find_clipped_corners(b_hist, b_bins)
 
-        r_curve = self.create_tone_curve(r_left, r_right, r_adj_factor)
-        g_curve = self.create_tone_curve(g_left, g_right, g_adj_factor)
-        b_curve = self.create_tone_curve(b_left, b_right, b_adj_factor)
+        r_curve = self.create_tone_curve_s_curve(r_left, r_right, r_adj_factor)
+        g_curve = self.create_tone_curve_s_curve(g_left, g_right, g_adj_factor)
+        b_curve = self.create_tone_curve_s_curve(b_left, b_right, b_adj_factor)
 
         adjusted_rgb = rgb_to_process.copy()
         adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
@@ -237,7 +237,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
 
         adjusted_rgb = self.adjust_brightness(adjusted_rgb, brightness_adj)
-        adjusted_rgb = self.adjust_contrast(adjusted_rgb, contrast_adj)
+        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
         adjusted_rgb = self.adjust_highlights(adjusted_rgb, highlight_adj)
         adjusted_rgb = self.adjust_shadows(adjusted_rgb, shadow_adj)
 
