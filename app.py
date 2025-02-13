@@ -478,7 +478,7 @@ class ModernNegativeImageGUI(QMainWindow):
                 self.raw_file_paths = []  # Clear previous raw file paths
 
                 for file_path in self.file_manager.file_paths:
-                    if file_path.lower().endswith(('.cr2', '.cr3', '.raw', '.nef')): # Check file extension
+                    if file_path.lower().endswith(('.cr2', '.cr3', '.crw', '.raw', '.nef', '.arw', '.nrw', '.rw2', '.srf', '.sr2')): # Check file extension
                         self.raw_file_paths.append(file_path) # Add only raw paths
                 
                 self.progress_bar.show()
