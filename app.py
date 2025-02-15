@@ -1,27 +1,5 @@
 '''
 AUTHOR: Parashar Mohapatra
-
-MIT License
-
-Copyright (c) 2025 Parashar Mohapatra
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 '''
 
 import sys
@@ -168,10 +146,10 @@ class ModernNegativeImageGUI(QMainWindow):
                 font-size: 18px; /* Increased groupbox title font */
             }}
             QStatusBar {{
-                background-color: {GRAY_BG};
+                background-color: #fdf0e7;  /* Match sidebar color */
                 color: {TEXT_COLOR};
                 padding: 6px;
-                font-size: 14px; /* Slightly larger status bar font */
+                font-size: 14px;
             }}
             QScrollArea {{
                 border: none; /* Removed border */
@@ -203,6 +181,21 @@ class ModernNegativeImageGUI(QMainWindow):
         self.image_loader_thread = None  # Add thread attribute
         self.processed_pixmap = None  # Store the processed pixmap
         self.progress_bar = QProgressBar()  # Create progress bar
+        self.progress_bar.setFixedHeight(8)  # Make it even slimmer
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                border-radius: 4px;
+                background-color: #f0f0f0;
+                text-align: center;
+                margin: 0px 15px;  /* Add some margin on the sides */
+                max-width: 400px;  /* Limit the width */
+            }
+            QProgressBar::chunk {
+                background-color: #2196F3;  /* Match the blue theme */
+                border-radius: 4px;
+            }
+        """)
 
         # Create sidebar
         # Sidebar with explicit text colors
@@ -444,8 +437,9 @@ class ModernNegativeImageGUI(QMainWindow):
         self.status_bar.addPermanentWidget(self.progress_bar) # Add to status bar
         self.progress_bar.hide()  # Initially hide the progress bar
 
-        # Set window size
-        self.showMaximized()
+        # Set window size and properties
+        self.showMaximized()  # Show maximized window with normal window controls
+        #self.setFixedSize(self.size())  # Lock the window size
 
     def get_slider_values(self):
         return {
