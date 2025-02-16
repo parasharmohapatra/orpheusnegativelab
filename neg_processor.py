@@ -242,5 +242,8 @@ class ImageFileManager:
             raise ValueError("Invalid file path provided.")
         with rawpy.imread(file_path) as raw:
             return raw.postprocess(
-                output_bps=16, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1)
+                output_bps=16, 
+                use_camera_wb=True, 
+                no_auto_bright=True, 
+                gamma=(2.2, 4.5),
             )

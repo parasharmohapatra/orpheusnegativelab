@@ -48,9 +48,10 @@
      }
      #titleLabel {
        color: #2d3748;
-       font-size: 24px;
+       font-size: 30px;
        font-weight: 600;
-       padding: 14px 26px;
+       padding: 2px 0px;
+       margin: 8px 0px;
      }
      QPushButton {
        background-color: #FFFFFF;
@@ -163,11 +164,17 @@
            <verstretch>0</verstretch>
           </sizepolicy>
          </property>
-         <property name="minimumHeight">
-          <number>50</number>
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>50</height>
+          </size>
          </property>
-         <property name="maximumHeight">
-          <number>60</number>
+         <property name="maximumSize">
+          <size>
+           <width>16777215</width>
+           <height>60</height>
+          </size>
          </property>
          <property name="styleSheet">
           <string>
@@ -177,7 +184,7 @@
              font-weight: 600;
              text-align: center;
              padding: 4px 0px;
-             margin-bottom: 8px;
+             margin: 8px 0px;
            }
           </string>
          </property>

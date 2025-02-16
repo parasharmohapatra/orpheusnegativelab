@@ -228,24 +228,54 @@ class ModernNegativeImageGUI(QMainWindow):
             self.prevButton.setEnabled(True)  # Start at first image, so prev is disabled
 
     def prev_image(self):
-        self.save_current_image()
-        if self.file_manager and self.image_index > 0:
-            self.image_index -= 1
-            file_path = self.raw_file_paths[self.image_index] # Use raw_file_paths
-            self.image_processor.open_image(self.loaded_images[file_path])
-            self.current_image_path = file_path
-            self.display_image()
-            self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")  # Use raw_file_paths
+        try:
+            self.save_current_image()
+            if self.file_manager and self.image_index > 0:
+                self.image_index -= 1
+                file_path = self.raw_file_paths[self.image_index]
+                
+                # Check if image is loaded, if not try to load it
+                if file_path not in self.loaded_images:
+                    try:
+                        image_data = self.file_manager.load_image(file_path)
+                        self.loaded_images[file_path] = image_data
+                    except Exception as e:
+                        self.status_bar.showMessage(f"Error loading image {os.path.basename(file_path)}: {str(e)}")
+                        # Skip to previous image
+                        self.prev_image()
+                        return
+                
+                self.image_processor.open_image(self.loaded_images[file_path])
+                self.current_image_path = file_path
+                self.display_image()
+                self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")
+        except Exception as e:
+            self.status_bar.showMessage(f"Error navigating to previous image: {str(e)}")
 
     def next_image(self):
-        self.save_current_image()
-        if self.file_manager and self.image_index < len(self.raw_file_paths) - 1:  # Use raw_file_paths
-            self.image_index += 1
-            file_path = self.raw_file_paths[self.image_index]  # Use raw_file_paths
-            self.image_processor.open_image(self.loaded_images[file_path])
-            self.current_image_path = file_path
-            self.display_image()
-            self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")  # Use raw_file_paths
+        try:
+            self.save_current_image()
+            if self.file_manager and self.image_index < len(self.raw_file_paths) - 1:
+                self.image_index += 1
+                file_path = self.raw_file_paths[self.image_index]
+                
+                # Check if image is loaded, if not try to load it
+                if file_path not in self.loaded_images:
+                    try:
+                        image_data = self.file_manager.load_image(file_path)
+                        self.loaded_images[file_path] = image_data
+                    except Exception as e:
+                        self.status_bar.showMessage(f"Error loading image {os.path.basename(file_path)}: {str(e)}")
+                        # Skip to next image
+                        self.next_image()
+                        return
+                
+                self.image_processor.open_image(self.loaded_images[file_path])
+                self.current_image_path = file_path
+                self.display_image()
+                self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")
+        except Exception as e:
+            self.status_bar.showMessage(f"Error navigating to next image: {str(e)}")
 
     def rotate_image(self):
         self.rotation_angle = (self.rotation_angle - 90) % 360
