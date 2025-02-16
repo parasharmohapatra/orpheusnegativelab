@@ -245,5 +245,5 @@ class ImageFileManager:
                 output_bps=16, 
                 use_camera_wb=True, 
                 no_auto_bright=True, 
-                gamma=(2.2, 4.5),
+                gamma=(1, 1),
             )
