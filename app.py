@@ -124,13 +124,13 @@ class ModernNegativeImageGUI(QMainWindow):
     def setup_sliders(self):
         # Configure sliders
         slider_configs = {
-            'r': (-50, 50, 0),          # Changed from r_adj_factor to r
-            'g': (-50, 50, -10),        # Changed from g_adj_factor to g
-            'b': (-50, 50, -20),        # Changed from b_adj_factor to b
-            'brightness': (-100, 100, 0),  # Changed from brightness_adj to brightness
-            'gamma': (10, 200, 100),      # Changed from gamma_adj to gamma
-            'highlights': (-50, 50, 0),    # Changed from highlights_adj to highlights
-            'shadows': (-50, 50, 0),       # Changed from shadows_adj to shadows
+            'r': (-50, 50, 0),
+            'g': (-50, 50, 0),
+            'b': (-50, 50, 0),
+            'brightness': (-100, 100, 0),
+            'gamma': (10, 200, 100),
+            'highlights': (-50, 50, 0),
+            'shadows': (-50, 50, 0),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
@@ -140,10 +140,17 @@ class ModernNegativeImageGUI(QMainWindow):
             slider.setMinimum(min_val)
             slider.setMaximum(max_val)
             slider.setValue(default)
-            slider.valueChanged.connect(
-                lambda val, label=value_label: label.setText(f"{val/100:.2f}")
-            )
+            
+            # Create a non-lambda function to avoid closure issues
+            def create_value_updater(label):
+                return lambda val: label.setText(f"{val/100:.2f}")
+            
+            value_updater = create_value_updater(value_label)
+            slider.valueChanged.connect(value_updater)
             slider.sliderReleased.connect(self.trigger_update)
+            
+            # Trigger initial value update
+            value_updater(default)
 
     def get_slider_values(self):
         return {
@@ -348,8 +355,8 @@ class ModernNegativeImageGUI(QMainWindow):
         # Reset all sliders to their default values
         slider_configs = {  # Get your slider configurations
             'r': (-50, 50, 0),
-            'g': (-50, 50, -10),
-            'b': (-50, 50, -20),
+            'g': (-50, 50, 0),
+            'b': (-50, 50, 0),
             'brightness': (-100, 100, 0),
             'gamma': (10, 200, 100),
             'highlights': (-50, 50, 0),
