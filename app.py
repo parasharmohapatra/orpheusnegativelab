@@ -90,8 +90,8 @@ class ModernNegativeImageGUI(QMainWindow):
         self.update_timer.timeout.connect(self.process_image_update)
         
         # Disable navigation buttons initially
-        self.prevButton.setEnabled(False)
-        self.nextButton.setEnabled(False)
+        #self.prevButton.setEnabled(False)
+        #self.nextButton.setEnabled(False)
         
         # Initialize variables
         self.processor = None
@@ -124,13 +124,14 @@ class ModernNegativeImageGUI(QMainWindow):
     def setup_sliders(self):
         # Configure sliders
         slider_configs = {
-            'r': (-50, 50, 0),
-            'g': (-50, 50, 0),
-            'b': (-50, 50, 0),
-            'brightness': (-100, 100, 0),
-            'gamma': (10, 200, 100),
-            'highlights': (-50, 50, 0),
-            'shadows': (-50, 50, 0),
+            'tint': (90, 110, 100),
+            'whiteBalance': (90, 110, 100),
+            'blacks': (-100, 100, 0),
+            'whites': (-100, 100, 0),
+            'highlights': (-100, 100, 0),
+            'shadows': (-100, 100, 0),
+            'gamma': (0, 100, 50),
+            'log': (100, 200, 150),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
@@ -154,13 +155,14 @@ class ModernNegativeImageGUI(QMainWindow):
 
     def get_slider_values(self):
         return {
-            'r_adj_factor': self.rSlider.value() / 100,           # Changed to match new names
-            'g_adj_factor': self.gSlider.value() / 100,
-            'b_adj_factor': self.bSlider.value() / 100,
-            'brightness_adj': self.brightnessSlider.value() / 100,
+            'tint_adj_factor': self.tintSlider.value() / 100,  # Updated to tint
+            'white_balance_adj_factor': self.whiteBalanceSlider.value() / 100,  # Updated to white balance
+            'blacks': self.blacksSlider.value(),
+            'whites': self.whitesSlider.value(),
+            'highlights': self.highlightsSlider.value(),
+            'shadows': self.shadowsSlider.value(),
             'gamma_adj': self.gammaSlider.value() / 100,
-            'highlight_adj': self.highlightsSlider.value() / 100,
-            'shadow_adj': self.shadowsSlider.value() / 100,
+            'log_adj': self.logSlider.value() / 100
         }
 
     def update_slider_label(self, name):
@@ -177,8 +179,8 @@ class ModernNegativeImageGUI(QMainWindow):
         if self.directory_path:
             try:
                 # Disable navigation buttons while loading
-                self.prevButton.setEnabled(False)
-                self.nextButton.setEnabled(False)
+                #self.prevButton.setEnabled(False)
+                #self.nextButton.setEnabled(False)
                 
                 self.file_manager = ImageFileManager(self.directory_path)
                 self.image_processor = NumbaOptimizedNegativeImageProcessor()
@@ -384,13 +386,14 @@ class ModernNegativeImageGUI(QMainWindow):
     def reset_sliders(self):
         # Reset all sliders to their default values
         slider_configs = {  # Get your slider configurations
-            'r': (-50, 50, 0),
-            'g': (-50, 50, 0),
-            'b': (-50, 50, 0),
-            'brightness': (-100, 100, 0),
-            'gamma': (10, 200, 100),
-            'highlights': (-50, 50, 0),
-            'shadows': (-50, 50, 0),
+            'tint': (90, 110, 100),
+            'whiteBalance': (90, 110, 100),
+            'blacks': (-100, 100, 0),
+            'whites': (-100, 100, 0),
+            'highlights': (-100, 100, 0),
+            'shadows': (-100, 100, 0),
+            'gamma': (0, 100, 50),
+            'log': (100, 200, 150),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
