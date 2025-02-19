@@ -244,7 +244,7 @@
          <property name="maximumSize">
           <size>
            <width>16777215</width>
-           <height>60</height>
+           <height>70</height>
           </size>
          </property>
          <property name="styleSheet">
@@ -254,8 +254,8 @@
              font-size: 28px;
              font-weight: 600;
              text-align: center;
-             padding: 4px 0px;
-             margin: 8px 0px 20px 0px;
+             padding: 0px 0px;
+             margin: 1px 0px 1px 0px;
            }
           </string>
          </property>
