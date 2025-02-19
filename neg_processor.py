@@ -303,33 +303,36 @@ class NegativeImageProcessor:
         adjusted = jnp.clip(image + (shadow_adj * image), 0, max_val)
         return adjusted.astype(jnp.uint16)
 
-    def process_image(self, r_adj_factor=0, g_adj_factor=0, b_adj_factor=0, gamma=1.0, exposure_adj=0):
+    def process_image(self, tint_adj_factor=0, white_balance_adj_factor=0, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 
         rgb_to_process = self.original_rgb.copy()
-
+        rgb_to_process = 65535 - rgb_to_process
+        rgb_to_process = self.gray_world_white_balance(rgb_to_process)
+        #rgb_to_process = self.auto_balance_green_magenta_numpy(rgb_to_process)
         r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=128, range=(0, 65535))
         g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
         b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
 
-        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.001)
-        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.001)
-        b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.001)
+        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.01)
+        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.01)
+        b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.02)
 
-        r_curve = self.create_tone_curve(r_left, r_right, r_adj_factor)
-        g_curve = self.create_tone_curve(g_left, g_right, g_adj_factor)
-        b_curve = self.create_tone_curve(b_left, b_right, b_adj_factor)
+        r_curve = self.create_tone_curve_s_curve(r_left, r_right)
+        g_curve = self.create_tone_curve_s_curve(g_left, g_right)
+        b_curve = self.create_tone_curve_s_curve(b_left, b_right)
 
         adjusted_rgb = rgb_to_process.copy()
-        x = np.arange(65536, dtype=np.uint16)
-        adjusted_rgb[..., 0] = np.interp(rgb_to_process[..., 0], x, r_curve).astype(np.uint16)
-        adjusted_rgb[..., 1] = np.interp(rgb_to_process[..., 1], x, g_curve).astype(np.uint16)
-        adjusted_rgb[..., 2] = np.interp(rgb_to_process[..., 2], x, b_curve).astype(np.uint16)
+        adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
+        adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
+        adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
 
-        adjusted_rgb = self.adjust_exposure(adjusted_rgb, exposure_adj)
-        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma)
-
+        adjusted_rgb = self.adjust_tint_16bit(adjusted_rgb, tint_adj_factor)
+        adjusted_rgb = self.adjust_white_balance_blue_yellow_16bit(adjusted_rgb, white_balance_adj_factor)
+        adjusted_rgb = self.adjust_tones(adjusted_rgb, blacks, shadows, highlights, whites)
+        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
+        adjusted_rgb = self.adjust_log(adjusted_rgb, log_adj)
         self.current_rgb = adjusted_rgb
 
         return adjusted_rgb
@@ -349,23 +352,71 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         return adjusted
     
     @staticmethod
-    @njit(parallel=True)
+    @njit(parallel=True, fastmath=True)
     def gray_world_white_balance(image):
-        # Calculate the mean for each channel
-        mean_r = np.mean(image[:, :, 0])
-        mean_g = np.mean(image[:, :, 1])
-        mean_b = np.mean(image[:, :, 2])
+        # Pre-allocate output array and calculate means in one pass
+        h, w = image.shape[:2]
+        means = np.zeros(3, dtype=np.float32)
+        
+        # Calculate means using parallel reduction
+        for c in range(3):
+            sum_val = 0.0
+            for i in prange(h):
+                row_sum = 0.0
+                for j in range(w):
+                    row_sum += image[i, j, c]
+                sum_val += row_sum
+            means[c] = sum_val / (h * w)
+        
+        # Calculate scaling factors
+        scale_r = means[1] / means[0]
+        scale_b = means[1] / means[2]
+        
+        # Apply scaling using parallel processing
+        balanced_img = np.empty_like(image)
+        for i in prange(h):
+            for j in range(w):
+                # Copy green channel directly
+                balanced_img[i, j, 1] = image[i, j, 1]
+                # Scale red and blue channels with bounds checking
+                val_r = image[i, j, 0] * scale_r
+                val_b = image[i, j, 2] * scale_b
+                balanced_img[i, j, 0] = min(max(val_r, 0), 65535)
+                balanced_img[i, j, 2] = min(max(val_b, 0), 65535)
+        
+        return balanced_img
 
-        # Adjust scaling factors to make the image slightly bluer
-        scale_r = mean_g / (mean_r)
-        scale_b = (mean_g / (mean_b))  # Increase blue scaling factor
-
-        # Apply scaling factors to each channel
-        balanced_img = image.copy()
-        balanced_img[:, :, 0] = np.clip(balanced_img[:, :, 0] * scale_r, 0, 65535)
-        balanced_img[:, :, 2] = np.clip(balanced_img[:, :, 2] * scale_b, 0, 65535)
-
-        return balanced_img.astype(np.uint16)
+    
+    @staticmethod
+    @njit(parallel=True, fastmath=True)
+    def create_tone_curve_s_curve_fast(left, right):
+        curve = np.zeros(65536, dtype=np.uint16)
+        mid = (left + right) / 2
+        
+        # Create lookup table for sigmoid function
+        sigmoid_lut = np.empty(65536, dtype=np.float32)
+        scale = 10.0  # Controls steepness of S-curve
+        for i in range(65536):
+            x = (i - left) / (right - left)
+            if x <= 0:
+                sigmoid_lut[i] = 0
+            elif x >= 1:
+                sigmoid_lut[i] = 1
+            else:
+                # Simplified sigmoid function
+                x = (x - 0.5) * scale
+                sigmoid_lut[i] = 1 / (1 + np.exp(-x))
+        
+        # Apply S-curve transformation
+        for i in prange(65536):
+            if i <= left:
+                curve[i] = 0
+            elif i >= right:
+                curve[i] = 65535
+            else:
+                curve[i] = int(sigmoid_lut[i] * 65535)
+        
+        return curve
     
     def process_image(self, tint_adj_factor=0, white_balance_adj_factor=0, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
         if self.original_rgb is None:
@@ -379,8 +430,8 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
         b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
 
-        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.01)
-        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.01)
+        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.02)
+        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.02)
         b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.02)
 
         r_curve = self.create_tone_curve_s_curve(r_left, r_right)
@@ -392,10 +443,6 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
 
-        #adjusted_rgb = self.adjust_brightness(adjusted_rgb, brightness_adj)
-        #adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
-        #adjusted_rgb = self.adjust_highlights(adjusted_rgb, highlight_adj)
-        #adjusted_rgb = self.adjust_shadows(adjusted_rgb, shadow_adj)
         adjusted_rgb = self.adjust_tint_16bit(adjusted_rgb, tint_adj_factor)
         adjusted_rgb = self.adjust_white_balance_blue_yellow_16bit(adjusted_rgb, white_balance_adj_factor)
         adjusted_rgb = self.adjust_tones(adjusted_rgb, blacks, shadows, highlights, whites)
