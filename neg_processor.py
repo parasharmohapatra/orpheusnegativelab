@@ -341,6 +341,7 @@ class NegativeImageProcessor:
 class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
     def __init__(self):
         super().__init__()
+        self.original_rgb_copy = None
 
     @staticmethod
     @njit(parallel=True)
@@ -417,15 +418,18 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
                 curve[i] = int(sigmoid_lut[i] * 65535)
         
         return curve
-    
+    def open_image(self, image_data):
+        self.original_rgb = image_data
+        self.current_rgb = image_data.copy()
+        self.original_rgb_copy = 65535 - self.current_rgb
+        self.original_rgb_copy = self.gray_world_white_balance(self.original_rgb_copy)
+        self.original_rgb_copy = self.auto_balance_green_magenta_numpy(self.original_rgb_copy)
+
     def process_image(self, tint_adj_factor=0, white_balance_adj_factor=0, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 
-        rgb_to_process = self.original_rgb.copy()
-        rgb_to_process = 65535 - rgb_to_process
-        rgb_to_process = self.gray_world_white_balance(rgb_to_process)
-        rgb_to_process = self.auto_balance_green_magenta_numpy(rgb_to_process)
+        rgb_to_process = self.original_rgb_copy
         r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=128, range=(0, 65535))
         g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
         b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
@@ -438,7 +442,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         g_curve = self.create_tone_curve_s_curve(g_left, g_right)
         b_curve = self.create_tone_curve_s_curve(b_left, b_right)
 
-        adjusted_rgb = rgb_to_process.copy()
+        adjusted_rgb = rgb_to_process
         adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
         adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
