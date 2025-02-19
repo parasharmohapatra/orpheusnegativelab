@@ -429,7 +429,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 
-        rgb_to_process = self.original_rgb_copy
+        rgb_to_process = self.original_rgb_copy.copy()
         r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=128, range=(0, 65535))
         g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
         b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
@@ -442,7 +442,7 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         g_curve = self.create_tone_curve_s_curve(g_left, g_right)
         b_curve = self.create_tone_curve_s_curve(b_left, b_right)
 
-        adjusted_rgb = rgb_to_process
+        adjusted_rgb = rgb_to_process.copy()
         adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
         adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
         adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
