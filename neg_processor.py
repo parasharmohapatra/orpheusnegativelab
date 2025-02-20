@@ -18,8 +18,56 @@ class NegativeImageProcessor:
         self.current_rgb = None
 
     def open_image(self, image_data): # Accepts image data directly
+        # Initialize target values for color balance
+        target_blue_yellow = 128  # Target value for blue-yellow balance (middle of LAB b channel)
+        target_magenta_green = 128  # Target value for magenta-green balance (middle of LAB a channel)
+        max_iterations = 10  # Maximum iterations for convergence
+        tolerance = 2.0  # Acceptable difference from target
+        
         self.original_rgb = image_data
         self.current_rgb = image_data.copy()
+        self.original_rgb_copy = 65535 - self.current_rgb
+        
+        # Initial white balance
+        self.original_rgb_copy = self.gray_world_white_balance(self.original_rgb_copy)
+        
+        # Convert to 8-bit for LAB conversion
+        img_8bit = cv2.normalize(self.original_rgb_copy, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # Initialize adjustment factors
+        tint_adj_factor = 1.0
+        white_balance_adj_factor = 1.0
+        
+        # Iterative convergence
+        for _ in range(max_iterations):
+            # Convert to LAB color space
+            lab_image = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2LAB)
+            
+            # Calculate current mean values
+            mean_a = np.mean(lab_image[:, :, 1])  # a channel (magenta-green)
+            mean_b = np.mean(lab_image[:, :, 2])  # b channel (blue-yellow)
+            
+            # Check if we've converged
+            if (abs(mean_a - target_magenta_green) < tolerance and 
+                abs(mean_b - target_blue_yellow) < tolerance):
+                break
+            
+            # Adjust factors based on difference from target
+            tint_adj_factor *= (target_magenta_green / mean_a) ** 0.5
+            white_balance_adj_factor *= (target_blue_yellow / mean_b) ** 0.5
+            
+            # Apply adjustments
+            adjusted_image = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
+            adjusted_image = self.adjust_white_balance_blue_yellow_16bit(adjusted_image, white_balance_adj_factor)
+            
+            # Update for next iteration
+            img_8bit = cv2.normalize(adjusted_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # Apply final adjustments to the image
+        self.original_rgb_copy = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
+        self.original_rgb_copy = self.adjust_white_balance_blue_yellow_16bit(self.original_rgb_copy, white_balance_adj_factor)
+        
+        return tint_adj_factor, white_balance_adj_factor
 
     def find_clipped_corners(self, hist, bins, clip_percentage=0.001):
         total_pixels = np.sum(hist)
@@ -289,7 +337,7 @@ class NegativeImageProcessor:
     @jit
     def adjust_highlights(image, highlight_adj):
         max_val = 65535
-    
+        highlight_adj = highlight_adj - 0.4
         # Apply highlight adjustment
         adjusted = jnp.clip(image + (highlight_adj * (max_val - image)), 0, max_val)
         return adjusted.astype(jnp.uint16)
@@ -298,7 +346,7 @@ class NegativeImageProcessor:
     @jit
     def adjust_shadows(image, shadow_adj):
         max_val = 65535
-
+        shadow_adj = shadow_adj - 0.4
         # Apply shadow adjustment
         adjusted = jnp.clip(image + (shadow_adj * image), 0, max_val)
         return adjusted.astype(jnp.uint16)
@@ -419,13 +467,58 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         
         return curve
     def open_image(self, image_data):
+        # Initialize target values for color balance
+        target_blue_yellow = 128  # Target value for blue-yellow balance (middle of LAB b channel)
+        target_magenta_green = 125  # Target value for magenta-green balance (middle of LAB a channel)
+        max_iterations = 10  # Maximum iterations for convergence
+        tolerance = 1.0  # Acceptable difference from target
+        
         self.original_rgb = image_data
         self.current_rgb = image_data.copy()
         self.original_rgb_copy = 65535 - self.current_rgb
+        
+        # Initial white balance
         self.original_rgb_copy = self.gray_world_white_balance(self.original_rgb_copy)
-        self.original_rgb_copy = self.auto_balance_green_magenta_numpy(self.original_rgb_copy)
+        
+        # Convert to 8-bit for LAB conversion
+        img_8bit = cv2.normalize(self.original_rgb_copy, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # Initialize adjustment factors
+        tint_adj_factor = 1.0
+        white_balance_adj_factor = 1.0
+        
+        # Iterative convergence
+        for _ in range(max_iterations):
+            # Convert to LAB color space
+            lab_image = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2LAB)
+            
+            # Calculate current mean values
+            mean_a = np.mean(lab_image[:, :, 1])  # a channel (magenta-green)
+            mean_b = np.mean(lab_image[:, :, 2])  # b channel (blue-yellow)
+            
+            # Check if we've converged
+            if (abs(mean_a - target_magenta_green) < tolerance and 
+                abs(mean_b - target_blue_yellow) < tolerance):
+                break
+            
+            # Adjust factors based on difference from target
+            tint_adj_factor *= (target_magenta_green / mean_a) ** 0.5
+            white_balance_adj_factor *= (target_blue_yellow / mean_b) ** 0.5
+            
+            # Apply adjustments
+            adjusted_image = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
+            adjusted_image = self.adjust_white_balance_blue_yellow_16bit(adjusted_image, white_balance_adj_factor)
+            
+            # Update for next iteration
+            img_8bit = cv2.normalize(adjusted_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # Apply final adjustments to the image
+        self.original_rgb_copy = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
+        self.original_rgb_copy = self.adjust_white_balance_blue_yellow_16bit(self.original_rgb_copy, white_balance_adj_factor)
+        
+        return tint_adj_factor, white_balance_adj_factor
 
-    def process_image(self, tint_adj_factor=0, white_balance_adj_factor=0, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
+    def process_image(self, tint_adj_factor=1, white_balance_adj_factor=1, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 

@@ -131,7 +131,7 @@ class ModernNegativeImageGUI(QMainWindow):
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
             'gamma': (0, 100, 50),
-            'log': (100, 200, 150),
+            'log': (100, 200, 165),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
@@ -213,7 +213,13 @@ class ModernNegativeImageGUI(QMainWindow):
     def add_loaded_image(self, file_path, image_data): # Slot to add images as they are loaded
         self.loaded_images[file_path] = image_data
         if not self.current_image_path: # if this is the first image loaded
-            self.image_processor.open_image(image_data)
+            # Get the adjustment factors from open_image
+            tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(image_data)
+            
+            # Update the sliders with the calculated values
+            self.tintSlider.setValue(int(tint_adj_factor * 100))
+            self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
+            
             self.current_image_path = file_path
             self.display_image()
 
@@ -247,7 +253,13 @@ class ModernNegativeImageGUI(QMainWindow):
                         self.prev_image()
                         return
                 
-                self.image_processor.open_image(self.loaded_images[file_path])
+                # Get the adjustment factors from open_image
+                tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(self.loaded_images[file_path])
+                
+                # Update the sliders with the calculated values
+                self.tintSlider.setValue(int(tint_adj_factor * 100))
+                self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
+                
                 self.current_image_path = file_path
                 self.display_image()
                 self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")
@@ -272,7 +284,13 @@ class ModernNegativeImageGUI(QMainWindow):
                         self.next_image()
                         return
                 
-                self.image_processor.open_image(self.loaded_images[file_path])
+                # Get the adjustment factors from open_image
+                tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(self.loaded_images[file_path])
+                
+                # Update the sliders with the calculated values
+                self.tintSlider.setValue(int(tint_adj_factor * 100))
+                self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
+                
                 self.current_image_path = file_path
                 self.display_image()
                 self.status_bar.showMessage(f"Showing image {self.image_index + 1} of {len(self.raw_file_paths)}")
