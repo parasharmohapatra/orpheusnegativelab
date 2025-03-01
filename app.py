@@ -4,11 +4,12 @@ AUTHOR: Parashar Mohapatra
 
 import sys
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QPushButton, QLabel, QSlider, QFileDialog, 
-                            QScrollArea, QGroupBox, QStatusBar, QFrame, QSizePolicy, QGridLayout, QProgressBar)
-from PyQt5.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QIcon, QFont, QFontDatabase, QTransform
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                             QHBoxLayout, QPushButton, QLabel, QSlider, QFileDialog,
+                             QScrollArea, QGroupBox, QStatusBar, QFrame, QSizePolicy, QGridLayout, QProgressBar,
+                             QRubberBand)
+from PyQt5.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal, QRect, QPoint
+from PyQt5.QtGui import QPixmap, QImage, QIcon, QFont, QFontDatabase, QTransform, QCursor
 import numpy as np
 from PIL import Image
 from neg_processor import NumbaOptimizedNegativeImageProcessor, ImageFileManager
@@ -106,11 +107,20 @@ class ModernNegativeImageGUI(QMainWindow):
         self.processed_pixmap = None
         self.rotation_angle = 0
         self.flip_horizontal = False
+        self.is_cropping = False
+        self.crop_origin = None
+        self.rubber_band = None
+        self.original_pixmap = None
+        self.crop_rect = None
+        self.resize_mode = None
+        self.initial_rect = None
+        self._last_processed_image_path = None  # Track the last processed image path to detect new images
 
         # Connect signals
         self.openDirButton.clicked.connect(self.open_directory)
         self.rotateButton.clicked.connect(self.rotate_image)
         self.flipButton.clicked.connect(self.flip_image)
+        self.cropButton.clicked.connect(self.toggle_crop_mode)
         self.resetButton.clicked.connect(self.reset_sliders)
         self.prevButton.clicked.connect(self.prev_image)
         self.nextButton.clicked.connect(self.next_image)
@@ -130,8 +140,8 @@ class ModernNegativeImageGUI(QMainWindow):
             'whites': (-100, 100, 0),
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
-            'gamma': (0, 100, 50),
-            'log': (100, 200, 165),
+            'gamma': (0, 100,40),
+            'log': (100, 200, 160),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
@@ -316,6 +326,42 @@ class ModernNegativeImageGUI(QMainWindow):
 
         rotated_pixmap = self.processed_pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)  # Transform existing pixmap
 
+        # Store the original pixmap for cropping
+        self.original_pixmap = rotated_pixmap
+
+        # Apply crop if we have a crop rect and not in cropping mode
+        if self.crop_rect is not None and not self.is_cropping:
+            # We need to scale the crop rectangle from display coordinates to original image coordinates
+            # The crop_rect is in display coordinates (1047 x 699) but the original image is much larger (5496 x 3670)
+            
+            # Calculate the scaling factor between display and original image
+            display_width = self.image_label.pixmap().width()
+            display_height = self.image_label.pixmap().height()
+            original_width = rotated_pixmap.width()
+            original_height = rotated_pixmap.height()
+            
+            scale_x = original_width / display_width
+            scale_y = original_height / display_height
+            
+            # Scale the crop rectangle to original image coordinates
+            scaled_rect = QRect(
+                int(self.crop_rect.x() * scale_x),
+                int(self.crop_rect.y() * scale_y),
+                int(self.crop_rect.width() * scale_x),
+                int(self.crop_rect.height() * scale_y)
+            )
+            
+            # Ensure the scaled rect is within the image bounds
+            valid_rect = QRect(
+                max(0, scaled_rect.x()),
+                max(0, scaled_rect.y()),
+                min(scaled_rect.width(), original_width - scaled_rect.x()),
+                min(scaled_rect.height(), original_height - scaled_rect.y())
+            )
+            
+            # Apply the crop - this is the key operation that crops the image
+            rotated_pixmap = rotated_pixmap.copy(valid_rect)
+
         label_size = self.image_label.size()
         if label_size.width() <= 0 or label_size.height() <= 0:
             return
@@ -327,11 +373,350 @@ class ModernNegativeImageGUI(QMainWindow):
         )
 
         self.image_label.setPixmap(scaled_pixmap)
+        
+    def toggle_crop_mode(self):
+        if not self.is_cropping:
+            # Enter crop mode
+            self.is_cropping = True
+            self.cropButton.setText("Apply Crop")
+            self.status_bar.showMessage("Adjust the crop rectangle and click 'Apply Crop' when done")
+            
+            # Enable mouse tracking for the image label
+            self.image_label.setMouseTracking(True)
+            self.image_label.mousePressEvent = self.crop_mouse_press
+            self.image_label.mouseMoveEvent = self.crop_mouse_move
+            self.image_label.mouseReleaseEvent = self.crop_mouse_release
+            
+            # Store the original image for reference
+            if self.original_pixmap is None and self.processed_pixmap is not None:
+                transform = QTransform()
+                transform.rotate(self.rotation_angle)
+                if self.flip_horizontal:
+                    transform.scale(-1, 1)
+                self.original_pixmap = self.processed_pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+            
+            # Create rubber band for selection if it doesn't exist
+            if not self.rubber_band:
+                self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.image_label)
+            
+            # Initialize crop rectangle if not already set
+            if not self.crop_rect or not self.rubber_band.isVisible():
+                # Get image and label dimensions
+                label_rect = self.image_label.rect()
+                pixmap_size = self.image_label.pixmap().size()
+                
+                # Calculate scaling factors
+                scale_x = label_rect.width() / pixmap_size.width()
+                scale_y = label_rect.height() / pixmap_size.height()
+                
+                # Use the smaller scale to maintain aspect ratio
+                scale = min(scale_x, scale_y)
+                
+                # Calculate centered image position
+                img_width = pixmap_size.width() * scale
+                img_height = pixmap_size.height() * scale
+                img_x = (label_rect.width() - img_width) / 2
+                img_y = (label_rect.height() - img_height) / 2
+                
+                # Create initial crop rectangle (80% of image size)
+                crop_width = img_width * 0.8
+                crop_height = img_height * 0.8
+                crop_x = img_x + (img_width - crop_width) / 2
+                crop_y = img_y + (img_height - crop_height) / 2
+                
+                # Set rubber band geometry
+                self.rubber_band.setGeometry(QRect(
+                    int(crop_x), int(crop_y),
+                    int(crop_width), int(crop_height)
+                ))
+                
+                # Calculate and store the actual crop rectangle in image coordinates
+                self.update_crop_rect_from_rubber_band()
+            else:
+                # Restore the rubber band from existing crop_rect
+                self.update_rubber_band_from_crop_rect()
+            
+            # Show the rubber band
+            self.rubber_band.show()
+        else:
+            # Exit crop mode and apply crop
+            self.is_cropping = False
+            self.cropButton.setText("Crop")
+            self.status_bar.showMessage("Crop applied")
+            
+            # Disable custom mouse events
+            self.image_label.setMouseTracking(False)
+            self.image_label.mousePressEvent = None
+            self.image_label.mouseMoveEvent = None
+            self.image_label.mouseReleaseEvent = None
+            
+            # Hide rubber band
+            if self.rubber_band:
+                self.rubber_band.hide()
+            
+            # Make sure we have a valid crop rectangle
+            if self.crop_rect and self.crop_rect.isValid() and self.crop_rect.width() > 0 and self.crop_rect.height() > 0:
+                # Apply crop
+                pass
+            else:
+                # Invalid crop rectangle
+                pass
+                
+            # Apply the crop
+            self.transform_and_display()
+    
+    def update_crop_rect_from_rubber_band(self):
+        """Convert rubber band coordinates to image coordinates and update crop_rect"""
+        if not self.rubber_band or not self.original_pixmap:
+            return
+            
+        rubber_band_rect = self.rubber_band.geometry()
+        label_rect = self.image_label.rect()
+        pixmap_size = self.image_label.pixmap().size()
+        
+        # Get dimensions for calculations
+        
+        # Calculate scaling factors
+        scale_x = label_rect.width() / pixmap_size.width()
+        scale_y = label_rect.height() / pixmap_size.height()
+        
+        # Use the smaller scale to maintain aspect ratio
+        scale = min(scale_x, scale_y)
+        
+        # Calculate centered image position
+        img_width = pixmap_size.width() * scale
+        img_height = pixmap_size.height() * scale
+        img_x = (label_rect.width() - img_width) / 2
+        img_y = (label_rect.height() - img_height) / 2
+        
+        # Create image rect
+        image_rect = QRect(int(img_x), int(img_y), int(img_width), int(img_height))
+        
+        # Calculate the relative position of the rubber band within the displayed image
+        rel_x = (rubber_band_rect.x() - image_rect.x()) / scale
+        rel_y = (rubber_band_rect.y() - image_rect.y()) / scale
+        rel_width = rubber_band_rect.width() / scale
+        rel_height = rubber_band_rect.height() / scale
+        
+        
+        # Ensure coordinates are within bounds
+        rel_x = max(0, min(rel_x, pixmap_size.width()))
+        rel_y = max(0, min(rel_y, pixmap_size.height()))
+        rel_width = min(rel_width, pixmap_size.width() - rel_x)
+        rel_height = min(rel_height, pixmap_size.height() - rel_y)
+        
+        # Store the crop rectangle in image coordinates
+        self.crop_rect = QRect(int(rel_x), int(rel_y), int(rel_width), int(rel_height))
+        
+        # Show crop dimensions in status bar
+        self.status_bar.showMessage(f"Crop selection: {int(rel_width)}x{int(rel_height)} pixels")
+    
+    def update_rubber_band_from_crop_rect(self):
+        """Convert image coordinates to rubber band coordinates and update rubber band"""
+        if not self.rubber_band or not self.crop_rect or not self.original_pixmap:
+            return
+            
+        label_rect = self.image_label.rect()
+        pixmap_size = self.image_label.pixmap().size()
+        
+        # Calculate scaling factors
+        scale_x = label_rect.width() / pixmap_size.width()
+        scale_y = label_rect.height() / pixmap_size.height()
+        
+        # Use the smaller scale to maintain aspect ratio
+        scale = min(scale_x, scale_y)
+        
+        # Calculate centered image position
+        img_width = pixmap_size.width() * scale
+        img_height = pixmap_size.height() * scale
+        img_x = (label_rect.width() - img_width) / 2
+        img_y = (label_rect.height() - img_height) / 2
+        
+        # Create image rect
+        image_rect = QRect(int(img_x), int(img_y), int(img_width), int(img_height))
+        
+        # Convert crop rect to rubber band coordinates
+        rb_x = image_rect.x() + (self.crop_rect.x() * scale)
+        rb_y = image_rect.y() + (self.crop_rect.y() * scale)
+        rb_width = self.crop_rect.width() * scale
+        rb_height = self.crop_rect.height() * scale
+        
+        # Set rubber band geometry
+        self.rubber_band.setGeometry(QRect(
+            int(rb_x), int(rb_y),
+            int(rb_width), int(rb_height)
+        ))
+    
+    def crop_mouse_press(self, event):
+        if not self.is_cropping or not self.original_pixmap or not self.rubber_band:
+            return
+        
+        # Get the rubber band geometry
+        rect = self.rubber_band.geometry()
+        
+        # Determine which part of the crop rectangle was clicked
+        # (edges, corners, or inside for moving)
+        margin = 10  # pixels for edge/corner detection
+        
+        # Check corners first (they take precedence over edges)
+        if abs(event.pos().x() - rect.left()) <= margin and abs(event.pos().y() - rect.top()) <= margin:
+            self.resize_mode = "top-left"
+        elif abs(event.pos().x() - rect.right()) <= margin and abs(event.pos().y() - rect.top()) <= margin:
+            self.resize_mode = "top-right"
+        elif abs(event.pos().x() - rect.left()) <= margin and abs(event.pos().y() - rect.bottom()) <= margin:
+            self.resize_mode = "bottom-left"
+        elif abs(event.pos().x() - rect.right()) <= margin and abs(event.pos().y() - rect.bottom()) <= margin:
+            self.resize_mode = "bottom-right"
+        # Then check edges
+        elif abs(event.pos().x() - rect.left()) <= margin:
+            self.resize_mode = "left"
+        elif abs(event.pos().x() - rect.right()) <= margin:
+            self.resize_mode = "right"
+        elif abs(event.pos().y() - rect.top()) <= margin:
+            self.resize_mode = "top"
+        elif abs(event.pos().y() - rect.bottom()) <= margin:
+            self.resize_mode = "bottom"
+        # If inside the rectangle, it's a move operation
+        elif rect.contains(event.pos()):
+            self.resize_mode = "move"
+        else:
+            self.resize_mode = None
+            return
+        
+        # Store the initial position and rectangle
+        self.crop_origin = event.pos()
+        self.initial_rect = rect
+    
+    def crop_mouse_move(self, event):
+        if not self.is_cropping or not self.rubber_band or not self.crop_origin or not self.resize_mode:
+            return
+        
+        # Get the current mouse position
+        current_pos = event.pos()
+        
+        # Calculate the delta from the original position
+        dx = current_pos.x() - self.crop_origin.x()
+        dy = current_pos.y() - self.crop_origin.y()
+        
+        # Get the initial rectangle
+        rect = QRect(self.initial_rect)
+        
+        # Maintain aspect ratio
+        aspect_ratio = rect.width() / rect.height()
+        
+        # Update the rectangle based on the resize mode
+        if self.resize_mode == "move":
+            # Move the entire rectangle
+            rect.translate(dx, dy)
+        elif self.resize_mode == "top-left":
+            # Resize from top-left corner
+            new_width = rect.width() - dx
+            new_height = new_width / aspect_ratio
+            rect.setLeft(rect.right() - new_width)
+            rect.setTop(rect.bottom() - new_height)
+        elif self.resize_mode == "top-right":
+            # Resize from top-right corner
+            new_width = rect.width() + dx
+            new_height = new_width / aspect_ratio
+            rect.setRight(rect.left() + new_width)
+            rect.setTop(rect.bottom() - new_height)
+        elif self.resize_mode == "bottom-left":
+            # Resize from bottom-left corner
+            new_width = rect.width() - dx
+            new_height = new_width / aspect_ratio
+            rect.setLeft(rect.right() - new_width)
+            rect.setBottom(rect.top() + new_height)
+        elif self.resize_mode == "bottom-right":
+            # Resize from bottom-right corner
+            new_width = rect.width() + dx
+            new_height = new_width / aspect_ratio
+            rect.setRight(rect.left() + new_width)
+            rect.setBottom(rect.top() + new_height)
+        elif self.resize_mode == "left":
+            # Resize from left edge
+            new_width = rect.width() - dx
+            new_height = new_width / aspect_ratio
+            rect.setLeft(rect.right() - new_width)
+            # Center vertically
+            center_y = rect.center().y()
+            rect.setHeight(new_height)
+            rect.moveCenter(QPoint(rect.center().x(), center_y))
+        elif self.resize_mode == "right":
+            # Resize from right edge
+            new_width = rect.width() + dx
+            new_height = new_width / aspect_ratio
+            rect.setRight(rect.left() + new_width)
+            # Center vertically
+            center_y = rect.center().y()
+            rect.setHeight(new_height)
+            rect.moveCenter(QPoint(rect.center().x(), center_y))
+        elif self.resize_mode == "top":
+            # Resize from top edge
+            new_height = rect.height() - dy
+            new_width = new_height * aspect_ratio
+            rect.setTop(rect.bottom() - new_height)
+            # Center horizontally
+            center_x = rect.center().x()
+            rect.setWidth(new_width)
+            rect.moveCenter(QPoint(center_x, rect.center().y()))
+        elif self.resize_mode == "bottom":
+            # Resize from bottom edge
+            new_height = rect.height() + dy
+            new_width = new_height * aspect_ratio
+            rect.setBottom(rect.top() + new_height)
+            # Center horizontally
+            center_x = rect.center().x()
+            rect.setWidth(new_width)
+            rect.moveCenter(QPoint(center_x, rect.center().y()))
+        
+        # Ensure the rectangle stays within the image bounds
+        label_rect = self.image_label.rect()
+        pixmap_size = self.image_label.pixmap().size()
+        
+        # Calculate scaling factors
+        scale_x = label_rect.width() / pixmap_size.width()
+        scale_y = label_rect.height() / pixmap_size.height()
+        
+        # Use the smaller scale to maintain aspect ratio
+        scale = min(scale_x, scale_y)
+        
+        # Calculate centered image position
+        img_width = pixmap_size.width() * scale
+        img_height = pixmap_size.height() * scale
+        img_x = (label_rect.width() - img_width) / 2
+        img_y = (label_rect.height() - img_height) / 2
+        
+        # Create image rect
+        image_rect = QRect(int(img_x), int(img_y), int(img_width), int(img_height))
+        
+        # Constrain the crop rectangle to the image bounds
+        if rect.left() < image_rect.left():
+            rect.setLeft(image_rect.left())
+        if rect.top() < image_rect.top():
+            rect.setTop(image_rect.top())
+        if rect.right() > image_rect.right():
+            rect.setRight(image_rect.right())
+        if rect.bottom() > image_rect.bottom():
+            rect.setBottom(image_rect.bottom())
+        
+        # Update the rubber band
+        self.rubber_band.setGeometry(rect)
+        
+        # Update the crop rectangle
+        self.update_crop_rect_from_rubber_band()
+    
+    def crop_mouse_release(self, event):
+        # Reset the resize mode
+        self.resize_mode = None
 
     def display_image(self):
         if not self.file_manager or not self.image_processor or self.image_processor.current_rgb is None:
             self.image_label.clear()
             self.processed_pixmap = None  # Reset pixmap
+            self.original_pixmap = None   # Reset original pixmap
+            self.crop_rect = None         # Reset crop rectangle
+            self.resize_mode = None       # Reset resize mode
+            self.initial_rect = None      # Reset initial rect
             return
 
         try:
@@ -354,10 +739,24 @@ class ModernNegativeImageGUI(QMainWindow):
                 self.status_bar.showMessage("Failed to create QImage")
                 self.image_label.clear()
                 self.processed_pixmap = None  # Reset pixmap
+                self.original_pixmap = None   # Reset original pixmap
+                self.crop_rect = None         # Reset crop rectangle
                 return
 
             # Create and store the processed pixmap
             self.processed_pixmap = QPixmap.fromImage(img_qt)
+            
+            # Only reset crop state when loading a completely new image, not when just adjusting sliders
+            # We can detect slider changes vs. new image by checking if we're in the process_image_update method
+            # which is called from trigger_update when sliders change
+            if hasattr(self, '_last_processed_image_path') and self._last_processed_image_path != self.current_image_path:
+                # New image detected, resetting crop
+                if self.is_cropping:
+                    self.toggle_crop_mode()  # Exit crop mode
+                self.crop_rect = None
+            
+            # Store the current image path for comparison next time
+            self._last_processed_image_path = self.current_image_path
             
             # Apply transformations and display
             self.transform_and_display()
@@ -370,6 +769,10 @@ class ModernNegativeImageGUI(QMainWindow):
             print(f"Display Error: {e}")
             self.image_label.clear()
             self.processed_pixmap = None  # Reset pixmap
+            self.original_pixmap = None   # Reset original pixmap
+            self.crop_rect = None         # Reset crop rectangle
+            self.resize_mode = None       # Reset resize mode
+            self.initial_rect = None      # Reset initial rect
 
     def save_current_image(self):
         if not self.file_manager or not self.image_processor or self.image_processor.current_rgb is None or self.current_image_path is None:
@@ -384,8 +787,77 @@ class ModernNegativeImageGUI(QMainWindow):
                 file_name = file_name.replace(ext, ".jpg")
 
             save_path = os.path.join(positives_dir, file_name)
-
-            self.image_saver_thread = ImageSaverThread(self.image_processor.current_rgb, save_path, self.rotation_angle, self.flip_horizontal)  # Pass flip setting
+            
+            # If we have a crop, we need to apply it to the image data before saving
+            if self.crop_rect is not None and self.processed_pixmap is not None:
+                # Create a QImage from the processed array
+                processed_array = self.image_processor.current_rgb
+                processed_array = np.clip(processed_array / 256, 0, 255).astype(np.uint8)
+                
+                height, width, channel = processed_array.shape
+                bytes_per_line = 3 * width
+                img_qt = QImage(processed_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                
+                # Create a pixmap and apply transformations
+                pixmap = QPixmap.fromImage(img_qt)
+                transform = QTransform()
+                transform.rotate(self.rotation_angle)
+                if self.flip_horizontal:
+                    transform.scale(-1, 1)
+                
+                transformed_pixmap = pixmap.transformed(transform, Qt.TransformationMode.SmoothTransformation)
+                
+                # We need to scale the crop rectangle from display coordinates to original image coordinates
+                # Calculate the scaling factor between display and original image
+                display_width = self.image_label.pixmap().width()
+                display_height = self.image_label.pixmap().height()
+                original_width = transformed_pixmap.width()
+                original_height = transformed_pixmap.height()
+                
+                scale_x = original_width / display_width
+                scale_y = original_height / display_height
+                
+                
+                # Scale the crop rectangle to original image coordinates
+                scaled_rect = QRect(
+                    int(self.crop_rect.x() * scale_x),
+                    int(self.crop_rect.y() * scale_y),
+                    int(self.crop_rect.width() * scale_x),
+                    int(self.crop_rect.height() * scale_y)
+                )
+                
+                
+                # Ensure the scaled rect is within the image bounds
+                valid_rect = QRect(
+                    max(0, scaled_rect.x()),
+                    max(0, scaled_rect.y()),
+                    min(scaled_rect.width(), original_width - scaled_rect.x()),
+                    min(scaled_rect.height(), original_height - scaled_rect.y())
+                )
+                
+                
+                # Apply the crop
+                cropped_pixmap = transformed_pixmap.copy(valid_rect)
+                
+                # Convert back to numpy array for saving
+                cropped_image = cropped_pixmap.toImage()
+                width = cropped_image.width()
+                height = cropped_image.height()
+                
+                # Convert QImage to numpy array
+                ptr = cropped_image.bits()
+                ptr.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
+                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+                
+                # Convert RGBA to RGB
+                rgb_arr = arr[:, :, :3].copy()
+                
+                # Save the cropped image
+                self.image_saver_thread = ImageSaverThread(rgb_arr * 256, save_path, 0, False)  # No need for rotation/flip as already applied
+            else:
+                # Save the original image with rotation/flip
+                self.image_saver_thread = ImageSaverThread(self.image_processor.current_rgb, save_path, self.rotation_angle, self.flip_horizontal)
+            
             self.image_saver_thread.finished_saving.connect(self.saving_finished)
             self.image_saver_thread.error_saving.connect(self.saving_error)
             self.image_saver_thread.start()
@@ -393,6 +865,7 @@ class ModernNegativeImageGUI(QMainWindow):
 
         except Exception as e:
             self.status_bar.showMessage(f"Error preparing to save: {str(e)}")
+            print(f"Save Error: {e}")
 
     def saving_finished(self, save_path):
         file_name = os.path.basename(save_path)
@@ -418,7 +891,9 @@ class ModernNegativeImageGUI(QMainWindow):
             slider = getattr(self, f"{name}Slider")
             slider.setValue(default)
 
-        self.display_image() # Refresh the image to reflect the reset sliders
+        # Refresh the image to reflect the reset sliders
+        # The crop will be preserved because we've modified display_image to maintain crop state
+        self.display_image()
 
 
 def main():

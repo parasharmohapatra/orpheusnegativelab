@@ -468,8 +468,8 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         return curve
     def open_image(self, image_data):
         # Initialize target values for color balance
-        target_blue_yellow = 128  # Target value for blue-yellow balance (middle of LAB b channel)
-        target_magenta_green = 125  # Target value for magenta-green balance (middle of LAB a channel)
+        target_blue_yellow = 126  # Target value for blue-yellow balance (middle of LAB b channel)
+        target_magenta_green = 124  # Target value for magenta-green balance (middle of LAB a channel)
         max_iterations = 10  # Maximum iterations for convergence
         tolerance = 1.0  # Acceptable difference from target
         
