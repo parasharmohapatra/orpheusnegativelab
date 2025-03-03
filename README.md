@@ -5,7 +5,7 @@ Convert c41 and B&W negatives into positive images.
 
 ## Features
 
-* **RAW File Support:** Loads and processes various RAW file formats (e.g., .cr2, .cr3, .raw, .nef).
+* **RAW File Support:** Loads and processes various RAW file formats (e.g.: .cr2, .cr3, .raw, .nef).
 * **Real-time Adjustments:** Interactive sliders for adjusting Red, Green, Blue channels, Exposure, and Gamma.
 * **Rotation and Flipping:** Rotate images 90 degrees counter-clockwise and flip (left-right).
 * **Image Navigation:** Easily navigate between images in a directory.
