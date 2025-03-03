@@ -16,20 +16,22 @@ class NegativeImageProcessor:
     def __init__(self):
         self.original_rgb = None
         self.current_rgb = None
+        self.original_rgb_copy = None
 
-    def open_image(self, image_data): # Accepts image data directly
+    def open_image(self, image_data):
         # Initialize target values for color balance
         target_blue_yellow = 128  # Target value for blue-yellow balance (middle of LAB b channel)
-        target_magenta_green = 128  # Target value for magenta-green balance (middle of LAB a channel)
+        target_magenta_green = 124  # Target value for magenta-green balance (middle of LAB a channel)
         max_iterations = 10  # Maximum iterations for convergence
-        tolerance = 2.0  # Acceptable difference from target
+        tolerance = 1.0  # Acceptable difference from target
         
         self.original_rgb = image_data
         self.current_rgb = image_data.copy()
         self.original_rgb_copy = 65535 - self.current_rgb
-        
+        #self.original_rgb_copy = self.auto_contrast_adjust(self.original_rgb_copy)
         # Initial white balance
         self.original_rgb_copy = self.gray_world_white_balance(self.original_rgb_copy)
+        self.original_rgb_copy = self.auto_balance_green_magenta_numpy(self.original_rgb_copy)
         
         # Convert to 8-bit for LAB conversion
         img_8bit = cv2.normalize(self.original_rgb_copy, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -37,8 +39,12 @@ class NegativeImageProcessor:
         # Initialize adjustment factors
         tint_adj_factor = 1.0
         white_balance_adj_factor = 1.0
+        blacks_adj = 0
+        shadows_adj = 0
+        highlights_adj = 0
+        whites_adj = 0
         
-        # Iterative convergence
+        # Iterative convergence for color balance
         for _ in range(max_iterations):
             # Convert to LAB color space
             lab_image = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2LAB)
@@ -47,8 +53,8 @@ class NegativeImageProcessor:
             mean_a = np.mean(lab_image[:, :, 1])  # a channel (magenta-green)
             mean_b = np.mean(lab_image[:, :, 2])  # b channel (blue-yellow)
             
-            # Check if we've converged
-            if (abs(mean_a - target_magenta_green) < tolerance and 
+            # Check if we've converged for color balance
+            if (abs(mean_a - target_magenta_green) < tolerance and
                 abs(mean_b - target_blue_yellow) < tolerance):
                 break
             
@@ -63,18 +69,27 @@ class NegativeImageProcessor:
             # Update for next iteration
             img_8bit = cv2.normalize(adjusted_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         
-        # Apply final adjustments to the image
+        # Apply final color balance adjustments to the image
         self.original_rgb_copy = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
         self.original_rgb_copy = self.adjust_white_balance_blue_yellow_16bit(self.original_rgb_copy, white_balance_adj_factor)
-        
-        return tint_adj_factor, white_balance_adj_factor
+        #self.original_rgb_copy = self.auto_contrast_adjust(self.original_rgb_copy)
 
-    def find_clipped_corners(self, hist, bins, clip_percentage=0.001):
+
+        # Apply final tonal adjustments to the image
+        self.original_rgb_copy = self.adjust_tones(self.original_rgb_copy,
+                                                  blacks=blacks_adj,
+                                                  shadows=shadows_adj,
+                                                  highlights=highlights_adj,
+                                                  whites=whites_adj)
+        return tint_adj_factor, white_balance_adj_factor, blacks_adj, shadows_adj, highlights_adj, whites_adj
+
+    def find_clipped_corners(self, hist, bins, clip_percentage):
         total_pixels = np.sum(hist)
         clip_pixels = total_pixels * clip_percentage
 
         cumulative = np.cumsum(hist)
         left_idx = np.searchsorted(cumulative, clip_pixels)
+        right_idx = np.searchsorted(cumulative, total_pixels - clip_pixels)
         right_idx = np.searchsorted(cumulative, total_pixels - clip_pixels)
 
         left_idx = max(0, min(left_idx, len(bins) - 2))
@@ -100,7 +115,7 @@ class NegativeImageProcessor:
         y_mid = 65535 - ((mid - left) / (right - left)) * 65535
         adjusted_y_mid = y_mid + adj_factor * 65535
 
-        curve[:int(left)] = 0   
+        curve[:int(left)] = 0
         curve[int(right):] = 65535
         if int(right) > int(left):
             curve[int(left):int(mid)] = np.linspace(
@@ -137,25 +152,73 @@ class NegativeImageProcessor:
         curve = 65535/2 - (s_curve-65535/2)
         return curve
     
-    def gray_world_white_balance(self, image):
-        # Calculate the mean for each channel
-        mean_r = np.mean(image[:, :, 0])
-        mean_g = np.mean(image[:, :, 1])
-        mean_b = np.mean(image[:, :, 2])
-
-        # Adjust scaling factors to make the image slightly bluer
-        scale_r = mean_g / (mean_r)
-        scale_b = (mean_g / (mean_b))  # Increase blue scaling factor
-
-        # Apply scaling factors to each channel
-        balanced_img = image.copy()
-        balanced_img[:, :, 0] = np.clip(balanced_img[:, :, 0] * scale_r, 0, 65535)
-        balanced_img[:, :, 2] = np.clip(balanced_img[:, :, 2] * scale_b, 0, 65535)
-
-        return balanced_img.astype(np.uint16)
+    @staticmethod
+    @njit(parallel=True, fastmath=True)
+    def create_tone_curve_s_curve_fast(left, right):
+        curve = np.zeros(65536, dtype=np.uint16)
+        mid = (left + right) / 2
+        
+        # Create lookup table for sigmoid function
+        sigmoid_lut = np.empty(65536, dtype=np.float32)
+        scale = 10.0  # Controls steepness of S-curve
+        for i in range(65536):
+            x = (i - left) / (right - left)
+            if x <= 0:
+                sigmoid_lut[i] = 0
+            elif x >= 1:
+                sigmoid_lut[i] = 1
+            else:
+                # Simplified sigmoid function
+                x = (x - 0.5) * scale
+                sigmoid_lut[i] = 1 / (1 + np.exp(-x))
+        
+        # Apply S-curve transformation
+        for i in prange(65536):
+            if i <= left:
+                curve[i] = 0
+            elif i >= right:
+                curve[i] = 65535
+            else:
+                curve[i] = int(sigmoid_lut[i] * 65535)
+        
+        return curve
+    
+    @staticmethod
+    @njit(parallel=True, fastmath=True)
+    def gray_world_white_balance(image):
+        # Pre-allocate output array and calculate means in one pass
+        h, w = image.shape[:2]
+        means = np.zeros(3, dtype=np.float32)
+        
+        # Calculate means using parallel reduction
+        for c in range(3):
+            sum_val = 0.0
+            for i in prange(h):
+                row_sum = 0.0
+                for j in range(w):
+                    row_sum += image[i, j, c]
+                sum_val += row_sum
+            means[c] = sum_val / (h * w)
+        
+        # Calculate scaling factors
+        scale_r = means[1] / means[0]
+        scale_b = means[1] / means[2]
+        
+        # Apply scaling using parallel processing
+        balanced_img = np.empty_like(image)
+        for i in prange(h):
+            for j in range(w):
+                # Copy green channel directly
+                balanced_img[i, j, 1] = image[i, j, 1]
+                # Scale red and blue channels with bounds checking
+                val_r = image[i, j, 0] * scale_r
+                val_b = image[i, j, 2] * scale_b
+                balanced_img[i, j, 0] = min(max(val_r, 0), 65535)
+                balanced_img[i, j, 2] = min(max(val_b, 0), 65535)
+        
+        return balanced_img
 
     def auto_balance_green_magenta_numpy(self, image):
-        # Normalize the 16-bit image to 8-bit
         # Normalize the 16-bit image to 8-bit
         image_8bit = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
@@ -201,7 +264,7 @@ class NegativeImageProcessor:
         return adjusted_image_16bit
 
     def adjust_tones(self, image, blacks=0, shadows=0, highlights=0, whites=0):
-            # Normalize the 16-bit image to 8-bit
+        # Normalize the 16-bit image to 8-bit
         image_8bit = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
         # Convert the image to LAB color space
@@ -233,7 +296,6 @@ class NegativeImageProcessor:
 
         return adjusted_image_16bit
     
-
     def adjust_white_balance_blue_yellow_16bit(self, image, blue_yellow_factor=1.0):
         # Normalize the 16-bit image to 8-bit
         image_8bit = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -279,9 +341,18 @@ class NegativeImageProcessor:
 
         # Convert the 8-bit tinted image back to 16-bit
         tinted_image_16bit = cv2.normalize(tinted_image_8bit, None, 0, 65535, cv2.NORM_MINMAX, dtype=cv2.CV_16U)
-
         return tinted_image_16bit
-    
+
+    def auto_contrast_adjust(self, image, clip_percentage):
+        # Calculate the histogram and find the lower and upper percentiles for contrast stretching
+        hist, bins = np.histogram(image.ravel(), bins=65536, range=(0, 65535))
+        lower_bound, upper_bound = self.find_clipped_corners(hist, bins, clip_percentage)
+
+        # Perform contrast stretching
+        stretched = np.clip((image - lower_bound) * (65535 / (upper_bound - lower_bound)), 0, 65535)
+        return stretched.astype(np.uint16)
+
+
     @staticmethod
     @jit
     def adjust_exposure(image, exposure_adj):
@@ -337,7 +408,6 @@ class NegativeImageProcessor:
     @jit
     def adjust_highlights(image, highlight_adj):
         max_val = 65535
-        highlight_adj = highlight_adj - 0.4
         # Apply highlight adjustment
         adjusted = jnp.clip(image + (highlight_adj * (max_val - image)), 0, max_val)
         return adjusted.astype(jnp.uint16)
@@ -346,50 +416,9 @@ class NegativeImageProcessor:
     @jit
     def adjust_shadows(image, shadow_adj):
         max_val = 65535
-        shadow_adj = shadow_adj - 0.4
         # Apply shadow adjustment
         adjusted = jnp.clip(image + (shadow_adj * image), 0, max_val)
         return adjusted.astype(jnp.uint16)
-
-    def process_image(self, tint_adj_factor=0, white_balance_adj_factor=0, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
-        if self.original_rgb is None:
-            raise ValueError("No image has been opened. Call open_image first.")
-
-        rgb_to_process = self.original_rgb.copy()
-        rgb_to_process = 65535 - rgb_to_process
-        rgb_to_process = self.gray_world_white_balance(rgb_to_process)
-        #rgb_to_process = self.auto_balance_green_magenta_numpy(rgb_to_process)
-        r_hist, r_bins = np.histogram(rgb_to_process[..., 0].ravel(), bins=128, range=(0, 65535))
-        g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
-        b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
-
-        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.01)
-        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.01)
-        b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.02)
-
-        r_curve = self.create_tone_curve_s_curve(r_left, r_right)
-        g_curve = self.create_tone_curve_s_curve(g_left, g_right)
-        b_curve = self.create_tone_curve_s_curve(b_left, b_right)
-
-        adjusted_rgb = rgb_to_process.copy()
-        adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
-        adjusted_rgb[..., 1] = self.apply_tone_curve(rgb_to_process[..., 1], g_curve)
-        adjusted_rgb[..., 2] = self.apply_tone_curve(rgb_to_process[..., 2], b_curve)
-
-        adjusted_rgb = self.adjust_tint_16bit(adjusted_rgb, tint_adj_factor)
-        adjusted_rgb = self.adjust_white_balance_blue_yellow_16bit(adjusted_rgb, white_balance_adj_factor)
-        adjusted_rgb = self.adjust_tones(adjusted_rgb, blacks, shadows, highlights, whites)
-        adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
-        adjusted_rgb = self.adjust_log(adjusted_rgb, log_adj)
-        self.current_rgb = adjusted_rgb
-
-        return adjusted_rgb
-
-
-class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
-    def __init__(self):
-        super().__init__()
-        self.original_rgb_copy = None
 
     @staticmethod
     @njit(parallel=True)
@@ -399,126 +428,8 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
             for j in prange(image.shape[1]):
                 adjusted[i, j] = tone_curve[image[i, j]]
         return adjusted
-    
-    @staticmethod
-    @njit(parallel=True, fastmath=True)
-    def gray_world_white_balance(image):
-        # Pre-allocate output array and calculate means in one pass
-        h, w = image.shape[:2]
-        means = np.zeros(3, dtype=np.float32)
-        
-        # Calculate means using parallel reduction
-        for c in range(3):
-            sum_val = 0.0
-            for i in prange(h):
-                row_sum = 0.0
-                for j in range(w):
-                    row_sum += image[i, j, c]
-                sum_val += row_sum
-            means[c] = sum_val / (h * w)
-        
-        # Calculate scaling factors
-        scale_r = means[1] / means[0]
-        scale_b = means[1] / means[2]
-        
-        # Apply scaling using parallel processing
-        balanced_img = np.empty_like(image)
-        for i in prange(h):
-            for j in range(w):
-                # Copy green channel directly
-                balanced_img[i, j, 1] = image[i, j, 1]
-                # Scale red and blue channels with bounds checking
-                val_r = image[i, j, 0] * scale_r
-                val_b = image[i, j, 2] * scale_b
-                balanced_img[i, j, 0] = min(max(val_r, 0), 65535)
-                balanced_img[i, j, 2] = min(max(val_b, 0), 65535)
-        
-        return balanced_img
 
-    
-    @staticmethod
-    @njit(parallel=True, fastmath=True)
-    def create_tone_curve_s_curve_fast(left, right):
-        curve = np.zeros(65536, dtype=np.uint16)
-        mid = (left + right) / 2
-        
-        # Create lookup table for sigmoid function
-        sigmoid_lut = np.empty(65536, dtype=np.float32)
-        scale = 10.0  # Controls steepness of S-curve
-        for i in range(65536):
-            x = (i - left) / (right - left)
-            if x <= 0:
-                sigmoid_lut[i] = 0
-            elif x >= 1:
-                sigmoid_lut[i] = 1
-            else:
-                # Simplified sigmoid function
-                x = (x - 0.5) * scale
-                sigmoid_lut[i] = 1 / (1 + np.exp(-x))
-        
-        # Apply S-curve transformation
-        for i in prange(65536):
-            if i <= left:
-                curve[i] = 0
-            elif i >= right:
-                curve[i] = 65535
-            else:
-                curve[i] = int(sigmoid_lut[i] * 65535)
-        
-        return curve
-    def open_image(self, image_data):
-        # Initialize target values for color balance
-        target_blue_yellow = 126  # Target value for blue-yellow balance (middle of LAB b channel)
-        target_magenta_green = 124  # Target value for magenta-green balance (middle of LAB a channel)
-        max_iterations = 10  # Maximum iterations for convergence
-        tolerance = 1.0  # Acceptable difference from target
-        
-        self.original_rgb = image_data
-        self.current_rgb = image_data.copy()
-        self.original_rgb_copy = 65535 - self.current_rgb
-        
-        # Initial white balance
-        self.original_rgb_copy = self.gray_world_white_balance(self.original_rgb_copy)
-        
-        # Convert to 8-bit for LAB conversion
-        img_8bit = cv2.normalize(self.original_rgb_copy, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        
-        # Initialize adjustment factors
-        tint_adj_factor = 1.0
-        white_balance_adj_factor = 1.0
-        
-        # Iterative convergence
-        for _ in range(max_iterations):
-            # Convert to LAB color space
-            lab_image = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2LAB)
-            
-            # Calculate current mean values
-            mean_a = np.mean(lab_image[:, :, 1])  # a channel (magenta-green)
-            mean_b = np.mean(lab_image[:, :, 2])  # b channel (blue-yellow)
-            
-            # Check if we've converged
-            if (abs(mean_a - target_magenta_green) < tolerance and 
-                abs(mean_b - target_blue_yellow) < tolerance):
-                break
-            
-            # Adjust factors based on difference from target
-            tint_adj_factor *= (target_magenta_green / mean_a) ** 0.5
-            white_balance_adj_factor *= (target_blue_yellow / mean_b) ** 0.5
-            
-            # Apply adjustments
-            adjusted_image = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
-            adjusted_image = self.adjust_white_balance_blue_yellow_16bit(adjusted_image, white_balance_adj_factor)
-            
-            # Update for next iteration
-            img_8bit = cv2.normalize(adjusted_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        
-        # Apply final adjustments to the image
-        self.original_rgb_copy = self.adjust_tint_16bit(self.original_rgb_copy, tint_adj_factor)
-        self.original_rgb_copy = self.adjust_white_balance_blue_yellow_16bit(self.original_rgb_copy, white_balance_adj_factor)
-        
-        return tint_adj_factor, white_balance_adj_factor
-
-    def process_image(self, tint_adj_factor=1, white_balance_adj_factor=1, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0):
+    def process_image(self, tint_adj_factor=1, white_balance_adj_factor=1, blacks=0, shadows=0, highlights=0, whites=0, gamma_adj=1.0, log_adj=1.0, clip_percentage=0.001):
         if self.original_rgb is None:
             raise ValueError("No image has been opened. Call open_image first.")
 
@@ -527,9 +438,9 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
         g_hist, g_bins = np.histogram(rgb_to_process[..., 1].ravel(), bins=128, range=(0, 65535))
         b_hist, b_bins = np.histogram(rgb_to_process[..., 2].ravel(), bins=128, range=(0, 65535))
 
-        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.02)
-        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.02)
-        b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.02)
+        r_left, r_right = self.find_clipped_corners(r_hist, r_bins, 0.01)
+        g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.01)
+        b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.01)
 
         r_curve = self.create_tone_curve_s_curve(r_left, r_right)
         g_curve = self.create_tone_curve_s_curve(g_left, g_right)
@@ -542,10 +453,10 @@ class NumbaOptimizedNegativeImageProcessor(NegativeImageProcessor):
 
         adjusted_rgb = self.adjust_tint_16bit(adjusted_rgb, tint_adj_factor)
         adjusted_rgb = self.adjust_white_balance_blue_yellow_16bit(adjusted_rgb, white_balance_adj_factor)
+        adjusted_rgb = self.auto_contrast_adjust(adjusted_rgb, clip_percentage)
         adjusted_rgb = self.adjust_tones(adjusted_rgb, blacks, shadows, highlights, whites)
         adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
         adjusted_rgb = self.adjust_log(adjusted_rgb, log_adj)
-        self.current_rgb = adjusted_rgb
 
         return adjusted_rgb
 

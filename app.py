@@ -12,7 +12,7 @@ from PyQt5.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal, QRect, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QIcon, QFont, QFontDatabase, QTransform, QCursor
 import numpy as np
 from PIL import Image
-from neg_processor import NumbaOptimizedNegativeImageProcessor, ImageFileManager
+from neg_processor import NegativeImageProcessor, ImageFileManager
 import cProfile
 import pstats
 from PyQt5 import uic
@@ -140,8 +140,9 @@ class ModernNegativeImageGUI(QMainWindow):
             'whites': (-100, 100, 0),
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
-            'gamma': (0, 100,40),
-            'log': (100, 200, 160),
+            'gamma': (0, 200,100),
+            'log': (100, 200, 150),
+            'glow': (1, 200, 50),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
@@ -151,11 +152,11 @@ class ModernNegativeImageGUI(QMainWindow):
             slider.setMinimum(min_val)
             slider.setMaximum(max_val)
             slider.setValue(default)
-            
             # Create a non-lambda function to avoid closure issues
             def create_value_updater(label):
-                return lambda val: label.setText(f"{val/100:.2f}")
-            
+                return lambda val: label.setText(f"{val/100:.3f}")
+
+            value_updater = create_value_updater(value_label)
             value_updater = create_value_updater(value_label)
             slider.valueChanged.connect(value_updater)
             slider.sliderReleased.connect(self.trigger_update)
@@ -172,7 +173,8 @@ class ModernNegativeImageGUI(QMainWindow):
             'highlights': self.highlightsSlider.value(),
             'shadows': self.shadowsSlider.value(),
             'gamma_adj': self.gammaSlider.value() / 100,
-            'log_adj': self.logSlider.value() / 100
+            'log_adj': self.logSlider.value() / 100,
+            'clip_percentage': self.glowSlider.value() / 1000,
         }
 
     def update_slider_label(self, name):
@@ -193,7 +195,7 @@ class ModernNegativeImageGUI(QMainWindow):
                 #self.nextButton.setEnabled(False)
                 
                 self.file_manager = ImageFileManager(self.directory_path)
-                self.image_processor = NumbaOptimizedNegativeImageProcessor()
+                self.image_processor = NegativeImageProcessor()
                 self.image_index = 0
                 self.loaded_images = {}
                 self.raw_file_paths = []
@@ -222,14 +224,21 @@ class ModernNegativeImageGUI(QMainWindow):
     
     def add_loaded_image(self, file_path, image_data): # Slot to add images as they are loaded
         self.loaded_images[file_path] = image_data
-        if not self.current_image_path: # if this is the first image loaded
+        if not self.current_image_path:  # if this is the first image loaded
             # Get the adjustment factors from open_image
-            tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(image_data)
-            
+            tint_adj_factor, white_balance_adj_factor, blacks_adj, shadows_adj, highlights_adj, whites_adj = self.image_processor.open_image(
+                image_data
+            )
+
             # Update the sliders with the calculated values
             self.tintSlider.setValue(int(tint_adj_factor * 100))
             self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
-            
+            self.blacksSlider.setValue(int(blacks_adj))
+            self.shadowsSlider.setValue(int(shadows_adj))
+            self.highlightsSlider.setValue(int(highlights_adj))
+            self.whitesSlider.setValue(int(whites_adj))
+            self.glowSlider.setValue(50)
+
             self.current_image_path = file_path
             self.display_image()
 
@@ -264,11 +273,15 @@ class ModernNegativeImageGUI(QMainWindow):
                         return
                 
                 # Get the adjustment factors from open_image
-                tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(self.loaded_images[file_path])
+                tint_adj_factor, white_balance_adj_factor, blacks_adj, shadows_adj, highlights_adj, whites_adj = self.image_processor.open_image(self.loaded_images[file_path])
                 
                 # Update the sliders with the calculated values
                 self.tintSlider.setValue(int(tint_adj_factor * 100))
                 self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
+                self.blacksSlider.setValue(int(blacks_adj))
+                self.shadowsSlider.setValue(int(shadows_adj))
+                self.highlightsSlider.setValue(int(highlights_adj))
+                self.whitesSlider.setValue(int(whites_adj))
                 
                 self.current_image_path = file_path
                 self.display_image()
@@ -295,11 +308,15 @@ class ModernNegativeImageGUI(QMainWindow):
                         return
                 
                 # Get the adjustment factors from open_image
-                tint_adj_factor, white_balance_adj_factor = self.image_processor.open_image(self.loaded_images[file_path])
+                tint_adj_factor, white_balance_adj_factor, blacks_adj, shadows_adj, highlights_adj, whites_adj = self.image_processor.open_image(self.loaded_images[file_path])
                 
                 # Update the sliders with the calculated values
                 self.tintSlider.setValue(int(tint_adj_factor * 100))
                 self.whiteBalanceSlider.setValue(int(white_balance_adj_factor * 100))
+                self.blacksSlider.setValue(int(blacks_adj))
+                self.shadowsSlider.setValue(int(shadows_adj))
+                self.highlightsSlider.setValue(int(highlights_adj))
+                self.whitesSlider.setValue(int(whites_adj))
                 
                 self.current_image_path = file_path
                 self.display_image()
@@ -722,9 +739,11 @@ class ModernNegativeImageGUI(QMainWindow):
         try:
             # Get current adjustments
             adjustments = self.get_slider_values()
-            
+
             # Process the image with current adjustments
-            processed_array = self.image_processor.process_image(**adjustments)
+            processed_array = self.image_processor.process_image(
+                **adjustments
+            )
             
             # Convert to QImage
             height, width, channel = processed_array.shape
@@ -853,7 +872,7 @@ class ModernNegativeImageGUI(QMainWindow):
                 rgb_arr = arr[:, :, :3].copy()
                 
                 # Save the cropped image
-                self.image_saver_thread = ImageSaverThread(rgb_arr * 256, save_path, 0, False)  # No need for rotation/flip as already applied
+                self.image_saver_thread = ImageSaverThread(rgb_arr, save_path, 0, False)  # No need for rotation/flip as already applied
             else:
                 # Save the original image with rotation/flip
                 self.image_saver_thread = ImageSaverThread(self.image_processor.current_rgb, save_path, self.rotation_angle, self.flip_horizontal)
@@ -883,17 +902,27 @@ class ModernNegativeImageGUI(QMainWindow):
             'whites': (-100, 100, 0),
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
-            'gamma': (0, 100, 50),
+            'gamma': (0, 200, 100),
             'log': (100, 200, 150),
+            'glow': (1, 200, 50),
         }
 
         for name, (min_val, max_val, default) in slider_configs.items():
             slider = getattr(self, f"{name}Slider")
             slider.setValue(default)
 
-        # Refresh the image to reflect the reset sliders
-        # The crop will be preserved because we've modified display_image to maintain crop state
+        # Reset crop state
+        if self.is_cropping:
+            self.toggle_crop_mode()  # Exit crop mode if active
+        self.crop_rect = None
+        
+        # Hide rubber band if visible
+        if self.rubber_band and self.rubber_band.isVisible():
+            self.rubber_band.hide()
+
+        # Refresh the image to reflect the reset sliders and crop
         self.display_image()
+        self.status_bar.showMessage("Adjustments and crop have been reset")
 
 
 def main():
