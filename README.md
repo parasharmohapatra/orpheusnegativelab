@@ -1,6 +1,6 @@
 # Orpheus Negative Lab - Process Film Negatives
 
-Convert c41 and B&W negatives into positive images. Tries to produce similar results to Lightroom Classic + Negative Lab Pro.
+Convert c41 and B&W negatives into positive images.
 ![Demo](data/demo.png)
 
 ## Features
@@ -79,10 +79,10 @@ This will start Orpheus Negative Lab.
 1. Open a directory: Click the "Open Directory" button and select the directory containing your RAW negatives. .CR2, .CR3 and .nef are supported (more will be added).
 
 2. I've tried to make the default processing done image provide reasonable outputs (this is also a work in progress so I'll try to keep making it better). However, everyone's style is different so here's how you can use the sliders to achieve your desired looks:
- - Lowering R will make the image more cyan. Increasing it will make it more red.
- - Lowering G will make the image more magenta. Increasing it will make it more green. 
- - Lowering B will make the image more yellow. Increasing it will make it more blue. 
+ - White balance and tint adjusts blue-yellow and green-magenta respectively
+ - Glow slider can be used to adjust contrast (don't ask me why I didn't name this slider contrast)
  - Brightness, Contrast, Highlights and Shadows work similar to what you'd expect. 
+ - Gamma and log for more sophisticated tonal adjustments
 
 3. Navigate images: Use the "Previous" and "Next" buttons to move between images in the loaded directory.
 
@@ -99,12 +99,9 @@ The image processing algorithm is relatively simple. It performs the following c
 1. Gets the histogram for each color channel
 2. Finds the corners of each histogram
 ![Histogram](data/histogram.png)
-3. creates a point curve of the following forms:
-![Tone Curves](data/tone_curves_adjustment_factors.png)
-4. Applies the point curve to the image
-5. Applies the brightness, contrast, shadows and highlights adjustments
-
-In general, the default setting work quite well. However, the image white balance can be further adjusted using the R, G, B sliders. I will come up with an algorithm to auto-correct white balance. 
+3. Applies contrast stretching using the glow slider
+4. Applies the brightness, contrast, shadows and highlights adjustments
+5. Optional - gamma and log adjustments for finer control
 
 ![Color Adjusted Processed](data/processed_color_adjusted.png)
 
