@@ -76,11 +76,11 @@ class NegativeImageProcessor:
 
 
         # Apply final tonal adjustments to the image
-        self.original_rgb_copy = self.adjust_tones(self.original_rgb_copy,
-                                                  blacks=blacks_adj,
-                                                  shadows=shadows_adj,
-                                                  highlights=highlights_adj,
-                                                  whites=whites_adj)
+        #self.original_rgb_copy = self.adjust_tones(self.original_rgb_copy,
+        #                                          blacks=blacks_adj,
+        #                                          shadows=shadows_adj,
+        #                                          highlights=highlights_adj,
+        #                                          whites=whites_adj)
         return tint_adj_factor, white_balance_adj_factor, blacks_adj, shadows_adj, highlights_adj, whites_adj
 
     def find_clipped_corners(self, hist, bins, clip_percentage):
@@ -211,7 +211,7 @@ class NegativeImageProcessor:
                 # Copy green channel directly
                 balanced_img[i, j, 1] = image[i, j, 1]
                 # Scale red and blue channels with bounds checking
-                val_r = image[i, j, 0] * scale_r
+                val_r = image[i, j, 0] * scale_r * 0.98
                 val_b = image[i, j, 2] * scale_b
                 balanced_img[i, j, 0] = min(max(val_r, 0), 65535)
                 balanced_img[i, j, 2] = min(max(val_b, 0), 65535)
@@ -442,9 +442,9 @@ class NegativeImageProcessor:
         g_left, g_right = self.find_clipped_corners(g_hist, g_bins, 0.01)
         b_left, b_right = self.find_clipped_corners(b_hist, b_bins, 0.01)
 
-        r_curve = self.create_tone_curve_s_curve(r_left, r_right)
-        g_curve = self.create_tone_curve_s_curve(g_left, g_right)
-        b_curve = self.create_tone_curve_s_curve(b_left, b_right)
+        r_curve = self.create_tone_curve(r_left, r_right)
+        g_curve = self.create_tone_curve(g_left, g_right)
+        b_curve = self.create_tone_curve(b_left, b_right)
 
         adjusted_rgb = rgb_to_process.copy()
         adjusted_rgb[..., 0] = self.apply_tone_curve(rgb_to_process[..., 0], r_curve)
@@ -457,6 +457,7 @@ class NegativeImageProcessor:
         adjusted_rgb = self.adjust_tones(adjusted_rgb, blacks, shadows, highlights, whites)
         adjusted_rgb = self.adjust_gamma(adjusted_rgb, gamma_adj)
         adjusted_rgb = self.adjust_log(adjusted_rgb, log_adj)
+        self.current_rgb = adjusted_rgb
 
         return adjusted_rgb
 

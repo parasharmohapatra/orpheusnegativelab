@@ -43,17 +43,23 @@ class ImageSaverThread(QThread):
     finished_saving = pyqtSignal(str)
     error_saving = pyqtSignal(str)
 
-    def __init__(self, image_data, save_path, rotation_angle, flip_horizontal):  # Add flip_horizontal
+    def __init__(self, image_data, save_path, rotation_angle, flip_horizontal, is_preprocessed=False):
         super().__init__()
         self.image_data = image_data
         self.save_path = save_path
         self.rotation_angle = rotation_angle
-        self.flip_horizontal = flip_horizontal  # Store flip setting
+        self.flip_horizontal = flip_horizontal
+        self.is_preprocessed = is_preprocessed  # Flag to indicate if image is already processed
 
     def run(self):
         try:
-            # *** PREPARE IMAGE FOR SAVING (INCLUDING ROTATION AND FLIP) ***
-            processed_image = np.clip(self.image_data / 256, 0, 255).astype(np.uint8)
+            # Process image data based on whether it's already preprocessed
+            if self.is_preprocessed:
+                # For cropped images that are already in the [0, 255] range
+                processed_image = self.image_data
+            else:
+                # For original images that need scaling
+                processed_image = np.clip(self.image_data / 256, 0, 255).astype(np.uint8)
 
             image = Image.fromarray(processed_image)
             if image.mode != 'RGB':
@@ -140,7 +146,7 @@ class ModernNegativeImageGUI(QMainWindow):
             'whites': (-100, 100, 0),
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
-            'gamma': (0, 200,100),
+            'gamma': (0, 150,50),
             'log': (100, 200, 150),
             'glow': (1, 200, 50),
         }
@@ -398,14 +404,19 @@ class ModernNegativeImageGUI(QMainWindow):
             self.cropButton.setText("Apply Crop")
             self.status_bar.showMessage("Adjust the crop rectangle and click 'Apply Crop' when done")
             
+            # Store the original mouse event handlers
+            self._original_mouse_press = self.image_label.mousePressEvent
+            self._original_mouse_move = self.image_label.mouseMoveEvent
+            self._original_mouse_release = self.image_label.mouseReleaseEvent
+            
             # Enable mouse tracking for the image label
             self.image_label.setMouseTracking(True)
             self.image_label.mousePressEvent = self.crop_mouse_press
             self.image_label.mouseMoveEvent = self.crop_mouse_move
             self.image_label.mouseReleaseEvent = self.crop_mouse_release
             
-            # Store the original image for reference
-            if self.original_pixmap is None and self.processed_pixmap is not None:
+            # Always update the original image for reference when entering crop mode
+            if self.processed_pixmap is not None:
                 transform = QTransform()
                 transform.rotate(self.rotation_angle)
                 if self.flip_horizontal:
@@ -461,11 +472,22 @@ class ModernNegativeImageGUI(QMainWindow):
             self.cropButton.setText("Crop")
             self.status_bar.showMessage("Crop applied")
             
-            # Disable custom mouse events
+            # Restore original mouse event handlers
             self.image_label.setMouseTracking(False)
-            self.image_label.mousePressEvent = None
-            self.image_label.mouseMoveEvent = None
-            self.image_label.mouseReleaseEvent = None
+            if hasattr(self, '_original_mouse_press'):
+                self.image_label.mousePressEvent = self._original_mouse_press
+            else:
+                self.image_label.mousePressEvent = None
+                
+            if hasattr(self, '_original_mouse_move'):
+                self.image_label.mouseMoveEvent = self._original_mouse_move
+            else:
+                self.image_label.mouseMoveEvent = None
+                
+            if hasattr(self, '_original_mouse_release'):
+                self.image_label.mouseReleaseEvent = self._original_mouse_release
+            else:
+                self.image_label.mouseReleaseEvent = None
             
             # Hide rubber band
             if self.rubber_band:
@@ -858,25 +880,66 @@ class ModernNegativeImageGUI(QMainWindow):
                 # Apply the crop
                 cropped_pixmap = transformed_pixmap.copy(valid_rect)
                 
-                # Convert back to numpy array for saving
-                cropped_image = cropped_pixmap.toImage()
-                width = cropped_image.width()
-                height = cropped_image.height()
+                # Instead of using the displayed pixmap, we'll apply the crop to the original processed image
+                # This ensures consistent color processing between cropped and non-cropped images
                 
-                # Convert QImage to numpy array
-                ptr = cropped_image.bits()
-                ptr.setsize(height * width * 4)  # 4 bytes per pixel (RGBA)
-                arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 4))
+                # Get the original processed image data
+                processed_array = self.image_processor.current_rgb
                 
-                # Convert RGBA to RGB
-                rgb_arr = arr[:, :, :3].copy()
+                # Create a PIL image from the processed array for easier manipulation
+                processed_image = np.clip(processed_array / 256, 0, 255).astype(np.uint8)
+                pil_image = Image.fromarray(processed_image)
                 
-                # Save the cropped image
-                self.image_saver_thread = ImageSaverThread(rgb_arr, save_path, 0, False)  # No need for rotation/flip as already applied
+                # Apply rotation and flip if needed
+                if self.rotation_angle != 0:
+                    pil_image = pil_image.rotate(-self.rotation_angle, expand=True)
+                if self.flip_horizontal:
+                    pil_image = pil_image.transpose(Image.FLIP_LEFT_RIGHT)
+                
+                # Calculate the crop coordinates in the original image space
+                img_width, img_height = pil_image.size
+                
+                # Scale the crop rectangle to match the original image dimensions
+                display_width = self.image_label.pixmap().width()
+                display_height = self.image_label.pixmap().height()
+                
+                scale_x = img_width / display_width
+                scale_y = img_height / display_height
+                
+                # Scale the crop rectangle to original image coordinates
+                scaled_rect = QRect(
+                    int(self.crop_rect.x() * scale_x),
+                    int(self.crop_rect.y() * scale_y),
+                    int(self.crop_rect.width() * scale_x),
+                    int(self.crop_rect.height() * scale_y)
+                )
+                
+                # Ensure the scaled rect is within the image bounds
+                valid_rect = QRect(
+                    max(0, scaled_rect.x()),
+                    max(0, scaled_rect.y()),
+                    min(scaled_rect.width(), img_width - scaled_rect.x()),
+                    min(scaled_rect.height(), img_height - scaled_rect.y())
+                )
+                
+                # Crop the PIL image
+                cropped_pil = pil_image.crop((
+                    valid_rect.x(),
+                    valid_rect.y(),
+                    valid_rect.x() + valid_rect.width(),
+                    valid_rect.y() + valid_rect.height()
+                ))
+                
+                # Convert PIL image to numpy array
+                cropped_array = np.array(cropped_pil)
+                
+                # Use the thread with is_preprocessed=True for cropped images
+                self.image_saver_thread = ImageSaverThread(cropped_array, save_path, 0, False, is_preprocessed=True)
             else:
                 # Save the original image with rotation/flip
                 self.image_saver_thread = ImageSaverThread(self.image_processor.current_rgb, save_path, self.rotation_angle, self.flip_horizontal)
             
+            # Connect signals and start the thread
             self.image_saver_thread.finished_saving.connect(self.saving_finished)
             self.image_saver_thread.error_saving.connect(self.saving_error)
             self.image_saver_thread.start()
@@ -902,7 +965,7 @@ class ModernNegativeImageGUI(QMainWindow):
             'whites': (-100, 100, 0),
             'highlights': (-100, 100, 0),
             'shadows': (-100, 100, 0),
-            'gamma': (0, 200, 100),
+            'gamma': (0, 150, 50),
             'log': (100, 200, 150),
             'glow': (1, 200, 50),
         }
