@@ -9,8 +9,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QLabel, QPushButton, QSlider, QFileDialog, QSplitter, QFrame,
-                            QSpacerItem, QSizePolicy, QGridLayout, QScrollArea, QMessageBox)
-from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor
+                            QSpacerItem, QSizePolicy, QGridLayout, QScrollArea, QMessageBox,
+                            QAction, QToolBar, QStatusBar, QMenu)
+from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor, QKeyEvent, QIcon
 from PyQt5.QtCore import Qt, QBuffer, QIODevice, QTimer, QPoint, QRectF
 
 class ToneCurveProcessor:
@@ -547,12 +548,25 @@ class ToneCurveEditor(QMainWindow):
         # Dictionary to store image-specific settings
         self.image_settings = {}
         
+        # Key tracking for keyboard shortcuts
+        self.keys_pressed = set()
+        
+        # Keyboard shortcuts enabled flag (off by default)
+        self.keyboard_shortcuts_enabled = False
+        
         self.init_ui()
         
     def init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle('Tone Curve Editor')
         self.setMinimumSize(1000, 800)  # Increased minimum height
+        
+        # Make main window focusable to capture keyboard events
+        self.setFocusPolicy(Qt.StrongFocus)
+        
+        # Create status bar
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
         
         # Create central widget and main layout
         central_widget = QWidget()
@@ -635,6 +649,12 @@ class ToneCurveEditor(QMainWindow):
         
         right_layout.addLayout(nav_layout)
         
+        # Add keyboard shortcuts info label
+        self.shortcuts_label = QLabel("Keyboard Shortcuts: Disabled")
+        self.shortcuts_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.shortcuts_label.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(self.shortcuts_label)
+        
         # Add right panel to splitter
         splitter.addWidget(right_panel)
         
@@ -652,7 +672,7 @@ class ToneCurveEditor(QMainWindow):
         
         # Update the UI state
         self.update_ui_state()
-    
+        
     def create_slider_group(self, layout):
         """Create all adjustment sliders with labels"""
         # Title for tone curve sliders section
@@ -1214,6 +1234,16 @@ class ToneCurveEditor(QMainWindow):
         exit_action = file_menu.addAction('Exit')
         exit_action.triggered.connect(self.close)
         
+        # Tools menu
+        tools_menu = menubar.addMenu('Tools')
+        
+        # Add keyboard shortcuts toggle action
+        self.toggle_shortcuts_action = QAction('Enable Keyboard Shortcuts', self)
+        self.toggle_shortcuts_action.setCheckable(True)
+        self.toggle_shortcuts_action.setChecked(False)
+        self.toggle_shortcuts_action.triggered.connect(self.toggle_keyboard_shortcuts)
+        tools_menu.addAction(self.toggle_shortcuts_action)
+        
         # Help menu
         help_menu = menubar.addMenu('Help')
         
@@ -1360,6 +1390,20 @@ class ToneCurveEditor(QMainWindow):
     <li><b>Reset</b>: Resets all transformations and adjustments</li>
 </ul>
 
+<h3>Keyboard Shortcuts</h3>
+<p>Keyboard shortcuts are disabled by default. Enable them using the "Enable Keyboard Shortcuts" button in the toolbar.</p>
+<ul>
+    <li><b>r + Left/Right Arrow</b>: Adjust the Red left slope</li>
+    <li><b>Shift+r + Left/Right Arrow</b>: Adjust the Red right slope</li>
+    <li><b>g + Left/Right Arrow</b>: Adjust the Green left slope</li>
+    <li><b>Shift+g + Left/Right Arrow</b>: Adjust the Green right slope</li>
+    <li><b>b + Left/Right Arrow</b>: Adjust the Blue left slope</li>
+    <li><b>Shift+b + Left/Right Arrow</b>: Adjust the Blue right slope</li>
+    <li><b>e + Left/Right Arrow</b>: Adjust Exposure</li>
+    <li><b>c + Left/Right Arrow</b>: Adjust Contrast</li>
+    <li><b>Cmd/Ctrl + Left/Right Arrow</b>: Navigate between images</li>
+</ul>
+
 <h3>Saving Images</h3>
 <ul>
     <li><b>Save</b>: Saves the current image as a JPG</li>
@@ -1391,6 +1435,21 @@ class ToneCurveEditor(QMainWindow):
         msg_box.setText(about_text)
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec_()
+
+    def toggle_keyboard_shortcuts(self):
+        """Toggle keyboard shortcuts on/off"""
+        self.keyboard_shortcuts_enabled = not self.keyboard_shortcuts_enabled
+        
+        # Update the menu item checkbox state
+        self.toggle_shortcuts_action.setChecked(self.keyboard_shortcuts_enabled)
+        
+        # Update shortcuts information label
+        if self.keyboard_shortcuts_enabled:
+            self.shortcuts_label.setText("Keyboard Shortcuts: r/g/b + ←→ for adjustments, e/c + ←→ for exposure/contrast, ⌘←→ to navigate")
+            self.statusBar.showMessage("Keyboard shortcuts enabled", 3000)
+        else:
+            self.shortcuts_label.setText("Keyboard Shortcuts: Disabled")
+            self.statusBar.showMessage("Keyboard shortcuts disabled", 3000)
 
 
 def main():
