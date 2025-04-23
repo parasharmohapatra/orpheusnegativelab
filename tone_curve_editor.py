@@ -10,8 +10,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QLabel, QPushButton, QSlider, QFileDialog, QSplitter, QFrame,
                             QSpacerItem, QSizePolicy, QGridLayout, QScrollArea, QMessageBox,
-                            QAction, QToolBar, QStatusBar, QMenu)
-from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor, QKeyEvent, QIcon
+                            QAction, QToolBar, QStatusBar, QMenu, QCheckBox)
+from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor, QKeyEvent, QIcon, QFontDatabase
 from PyQt5.QtCore import Qt, QBuffer, QIODevice, QTimer, QPoint, QRectF
 
 class ToneCurveProcessor:
@@ -44,6 +44,7 @@ class ToneCurveProcessor:
         # Transformation state
         self.rotation_angle = 0  # In 90-degree increments (0, 90, 180, 270)
         self.is_flipped = False  # Horizontal flip state
+        self.zoom_factor = 0.0   # Border cleanup zoom factor (0.0 = no zoom, 0.1 = 10% zoom)
 
     def load_raw_image(self, input_path=None):
         """Load a raw image into memory"""
@@ -279,6 +280,25 @@ class ToneCurveProcessor:
         # Apply flip if needed
         if self.is_flipped:
             self.processed_image = cv2.flip(self.processed_image, 1)  # 1 for horizontal flip
+            
+        # Apply zoom factor if needed
+        if self.zoom_factor > 0.0:
+            self.apply_zoom()
+
+    def apply_zoom(self):
+        """Apply zoom to processed image based on zoom_factor"""
+        if self.processed_image is None or self.zoom_factor <= 0.0:
+            return
+            
+        height, width = self.processed_image.shape[:2]
+        
+        # Calculate crop margin in pixels
+        margin_x = int(width * self.zoom_factor)
+        margin_y = int(height * self.zoom_factor)
+        
+        # Apply crop
+        if margin_x > 0 and margin_y > 0 and margin_x < width/2 and margin_y < height/2:
+            self.processed_image = self.processed_image[margin_y:height-margin_y, margin_x:width-margin_x]
 
     def rotate_image(self):
         """Rotate the processed image 90 degrees clockwise and update rotation state"""
@@ -310,6 +330,7 @@ class ToneCurveProcessor:
         """Reset all transformations and reapply tone curves"""
         self.rotation_angle = 0
         self.is_flipped = False
+        self.zoom_factor = 0.0
         
         # Reapply the tone curves to get back to untransformed state
         if self.inverted_image is not None:
@@ -317,13 +338,47 @@ class ToneCurveProcessor:
         
         return self.processed_image
 
-    def save_as_jpg(self, output_path=None, image=None):
+    def add_white_border(self, image=None, border_size=100):
+        """
+        Add a white border around the image.
+        
+        Parameters:
+            image (numpy.ndarray): The image to add border to
+            border_size (int): Size of the border in pixels
+            
+        Returns:
+            numpy.ndarray: The image with white border added
+        """
+        if image is None:
+            image = self.processed_image
+            
+        if image is None:
+            return None
+            
+        # Get image dimensions
+        height, width = image.shape[:2]
+        
+        # Create a new white canvas with border
+        new_height = height + 2 * border_size
+        new_width = width + 2 * border_size
+        
+        # Create a white canvas (255 for all RGB channels)
+        bordered_image = np.ones((new_height, new_width, 3), dtype=np.uint8) * 255
+        
+        # Place the original image in the center
+        bordered_image[border_size:border_size+height, border_size:border_size+width] = image
+        
+        return bordered_image
+        
+    def save_as_jpg(self, output_path=None, image=None, add_border=False, border_size=100):
         """
         Save the provided RGB image as a JPG file.
 
         Parameters:
             output_path (str): Path to save the image to.
             image (numpy.ndarray): The RGB image to save.
+            add_border (bool): Whether to add a white border.
+            border_size (int): Size of the border in pixels if add_border is True.
         """
         if output_path:
             self.output_path = output_path
@@ -335,6 +390,10 @@ class ToneCurveProcessor:
             return False
             
         try:
+            # Add white border if requested
+            if add_border:
+                image = self.add_white_border(image, border_size)
+            
             bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             cv2.imwrite(self.output_path, bgr_image)
             return True
@@ -489,8 +548,8 @@ class ImageViewer(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(400, 300)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setStyleSheet("background-color: #333333;")
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setStyleSheet("background-color: #222222;")  # Darker background
+        self.setFrameShape(QFrame.NoFrame)  # Remove frame
         self.original_pixmap = None
         
     def set_image(self, image):
@@ -503,7 +562,11 @@ class ImageViewer(QLabel):
         # Convert numpy array to QImage
         height, width, channels = image.shape
         bytes_per_line = channels * width
-        q_image = QImage(image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+        
+        # Create a copy of the array to ensure it's contiguous in memory
+        # and use numpy's tobytes() method instead of accessing .data directly
+        image_copy = np.ascontiguousarray(image)
+        q_image = QImage(image_copy.tobytes(), width, height, bytes_per_line, QImage.Format_RGB888)
         
         # Store the original pixmap
         self.original_pixmap = QPixmap.fromImage(q_image)
@@ -527,7 +590,7 @@ class ImageViewer(QLabel):
 
 
 class ToneCurveEditor(QMainWindow):
-    """Main window for the Tone Curve Editor application"""
+    """Main window for the Orpheus Negative Lab application"""
     
     def __init__(self):
         super(ToneCurveEditor, self).__init__()
@@ -554,12 +617,108 @@ class ToneCurveEditor(QMainWindow):
         # Keyboard shortcuts enabled flag (off by default)
         self.keyboard_shortcuts_enabled = False
         
+        # Load Roboto font if available
+        self.load_roboto_font()
+        
         self.init_ui()
+        
+    def load_roboto_font(self):
+        """Load Roboto font for the application"""
+        # Try to find Roboto on the system
+        font_db = QFontDatabase()
+        
+        # Check if Roboto is already installed in the system
+        roboto_families = [f for f in font_db.families() if 'roboto' in f.lower()]
+        
+        # If Roboto isn't found, we'll use system defaults but specify sans-serif as fallback
+        self.font_available = len(roboto_families) > 0
         
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle('Tone Curve Editor')
-        self.setMinimumSize(1000, 800)  # Increased minimum height
+        self.setWindowTitle('Orpheus Negative Lab')
+        self.setMinimumSize(1000, 800)
+        
+        # Font family setting based on availability
+        font_family = "'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        
+        # Apply minimalist application style
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: {font_family};
+            }}
+            QLabel {{
+                color: #e0e0e0;
+                font-family: {font_family};
+            }}
+            QPushButton {{
+                background-color: #2a2a2a;
+                color: #e0e0e0;
+                border: none;
+                padding: 6px;
+                border-radius: 2px;
+                font-family: {font_family};
+                font-weight: normal;
+            }}
+            QPushButton:hover {{
+                background-color: #3a3a3a;
+            }}
+            QPushButton:pressed {{
+                background-color: #444444;
+            }}
+            QSlider {{
+                height: 20px;
+            }}
+            QSlider::groove:horizontal {{
+                height: 3px;
+                background: #444444;
+            }}
+            QSlider::handle:horizontal {{
+                background: #888888;
+                width: 12px;
+                margin: -5px 0;
+                border-radius: 6px;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: #aaaaaa;
+            }}
+            QFrame {{
+                border: none;
+            }}
+            QSplitter::handle {{
+                background-color: #333333;
+            }}
+            QStatusBar {{
+                color: #888888;
+                font-family: {font_family};
+                font-size: 11px;
+            }}
+            QMenuBar {{
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: {font_family};
+            }}
+            QMenuBar::item {{
+                background-color: transparent;
+            }}
+            QMenuBar::item:selected {{
+                background-color: #3a3a3a;
+            }}
+            QMenu {{
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: {font_family};
+            }}
+            QMenu::item:selected {{
+                background-color: #3a3a3a;
+            }}
+            QMessageBox {{
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                font-family: {font_family};
+            }}
+        """)
         
         # Make main window focusable to capture keyboard events
         self.setFocusPolicy(Qt.StrongFocus)
@@ -571,11 +730,12 @@ class ToneCurveEditor(QMainWindow):
         # Create central widget and main layout
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)  # Add some padding
+        main_layout.setContentsMargins(8, 8, 8, 8)  # Reduced padding
+        main_layout.setSpacing(8)  # Reduced spacing
         
         # Create splitter for image view and controls
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(5)  # Make the splitter handle easier to grab
+        splitter.setHandleWidth(1)  # Thinner splitter handle
         
         # Left panel: Image viewer
         self.image_viewer = ImageViewer()
@@ -584,11 +744,12 @@ class ToneCurveEditor(QMainWindow):
         # Right panel: Controls and histogram
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(5, 5, 5, 5)  # Add some padding
+        right_layout.setContentsMargins(4, 4, 4, 4)  # Reduced padding
+        right_layout.setSpacing(8)  # Reduced spacing
         
         # Histogram display
         histogram_frame = QFrame()
-        histogram_frame.setFrameShape(QFrame.StyledPanel)
+        histogram_frame.setFrameShape(QFrame.NoFrame)  # Remove frame
         histogram_layout = QVBoxLayout(histogram_frame)
         histogram_layout.setContentsMargins(0, 0, 0, 0)  # No margins for minimalist look
         
@@ -596,11 +757,13 @@ class ToneCurveEditor(QMainWindow):
         self.histogram_canvas = HistogramCanvas(histogram_frame, width=5, height=6)
         histogram_layout.addWidget(self.histogram_canvas)
         
-        right_layout.addWidget(histogram_frame, stretch=3)  # Give more stretch to the histogram
+        right_layout.addWidget(histogram_frame, stretch=3)
         
         # Sliders groups
         sliders_group = QWidget()
         sliders_layout = QGridLayout(sliders_group)
+        sliders_layout.setContentsMargins(0, 0, 0, 0)  # No margins
+        sliders_layout.setSpacing(4)  # Tighter spacing
         
         # Create sliders
         self.create_slider_group(sliders_layout)
@@ -609,6 +772,8 @@ class ToneCurveEditor(QMainWindow):
         # Image transformation buttons
         transform_group = QWidget()
         transform_layout = QHBoxLayout(transform_group)
+        transform_layout.setContentsMargins(0, 0, 0, 0)  # No margins
+        transform_layout.setSpacing(6)  # Reduced spacing
         
         self.rotate_button = QPushButton("Rotate 90°")
         self.rotate_button.clicked.connect(self.rotate_current_image)
@@ -630,6 +795,7 @@ class ToneCurveEditor(QMainWindow):
         
         # Navigation buttons
         nav_layout = QHBoxLayout()
+        nav_layout.setSpacing(6)  # Reduced spacing
         
         self.prev_button = QPushButton("Previous")
         self.prev_button.clicked.connect(self.load_previous_image)
@@ -651,7 +817,7 @@ class ToneCurveEditor(QMainWindow):
         
         # Add keyboard shortcuts info label
         self.shortcuts_label = QLabel("Keyboard Shortcuts: Disabled")
-        self.shortcuts_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.shortcuts_label.setStyleSheet("color: #666666; font-size: 10px;")  # More subtle text
         self.shortcuts_label.setAlignment(Qt.AlignCenter)
         right_layout.addWidget(self.shortcuts_label)
         
@@ -676,19 +842,20 @@ class ToneCurveEditor(QMainWindow):
     def create_slider_group(self, layout):
         """Create all adjustment sliders with labels"""
         # Title for tone curve sliders section
-        tone_curve_label = QLabel("<b>Tone Curve Adjustments</b>")
+        tone_curve_label = QLabel("Tone Curve Adjustments")
+        tone_curve_label.setStyleSheet("font-size: 12px; color: #aaaaaa; font-weight: medium;")  # Medium weight for header
         layout.addWidget(tone_curve_label, 0, 0, 1, 4)
         
         # Red channel sliders
         red_label = QLabel("Red:")
+        red_label.setStyleSheet("color: #ff8080;")  # Reddish tint
         layout.addWidget(red_label, 1, 0)
         
         red_left_label = QLabel("Left:")
         self.red_left_slider = QSlider(Qt.Horizontal)
-        self.red_left_slider.setRange(50, 200)  # 0.5x to 2.0x
+        self.red_left_slider.setRange(1, 200)  # 0.5x to 2.0x
         self.red_left_slider.setValue(100)      # Default is 1.0x
-        self.red_left_slider.setTickPosition(QSlider.TicksBelow)
-        self.red_left_slider.setTickInterval(25)
+        self.red_left_slider.setTickPosition(QSlider.NoTicks)  # Remove ticks for cleaner look
         self.red_left_value_label = QLabel("1.0")
         self.red_left_slider.valueChanged.connect(self.slider_changed)
         
@@ -698,10 +865,9 @@ class ToneCurveEditor(QMainWindow):
         
         red_right_label = QLabel("Right:")
         self.red_right_slider = QSlider(Qt.Horizontal)
-        self.red_right_slider.setRange(50, 200)
+        self.red_right_slider.setRange(1, 200)
         self.red_right_slider.setValue(100)
-        self.red_right_slider.setTickPosition(QSlider.TicksBelow)
-        self.red_right_slider.setTickInterval(25)
+        self.red_right_slider.setTickPosition(QSlider.NoTicks)  # Remove ticks
         self.red_right_value_label = QLabel("1.0")
         self.red_right_slider.valueChanged.connect(self.slider_changed)
         
@@ -711,14 +877,14 @@ class ToneCurveEditor(QMainWindow):
         
         # Green channel sliders
         green_label = QLabel("Green:")
+        green_label.setStyleSheet("color: #80ff80;")  # Greenish tint
         layout.addWidget(green_label, 3, 0)
         
         green_left_label = QLabel("Left:")
         self.green_left_slider = QSlider(Qt.Horizontal)
-        self.green_left_slider.setRange(50, 200)
+        self.green_left_slider.setRange(1, 200)
         self.green_left_slider.setValue(100)
-        self.green_left_slider.setTickPosition(QSlider.TicksBelow)
-        self.green_left_slider.setTickInterval(25)
+        self.green_left_slider.setTickPosition(QSlider.NoTicks)
         self.green_left_value_label = QLabel("1.0")
         self.green_left_slider.valueChanged.connect(self.slider_changed)
         
@@ -728,10 +894,9 @@ class ToneCurveEditor(QMainWindow):
         
         green_right_label = QLabel("Right:")
         self.green_right_slider = QSlider(Qt.Horizontal)
-        self.green_right_slider.setRange(50, 200)
+        self.green_right_slider.setRange(1, 200)
         self.green_right_slider.setValue(100)
-        self.green_right_slider.setTickPosition(QSlider.TicksBelow)
-        self.green_right_slider.setTickInterval(25)
+        self.green_right_slider.setTickPosition(QSlider.NoTicks)
         self.green_right_value_label = QLabel("1.0")
         self.green_right_slider.valueChanged.connect(self.slider_changed)
         
@@ -741,14 +906,14 @@ class ToneCurveEditor(QMainWindow):
         
         # Blue channel sliders
         blue_label = QLabel("Blue:")
+        blue_label.setStyleSheet("color: #8080ff;")  # Blueish tint
         layout.addWidget(blue_label, 5, 0)
         
         blue_left_label = QLabel("Left:")
         self.blue_left_slider = QSlider(Qt.Horizontal)
-        self.blue_left_slider.setRange(50, 200)
+        self.blue_left_slider.setRange(1, 200)
         self.blue_left_slider.setValue(100)
-        self.blue_left_slider.setTickPosition(QSlider.TicksBelow)
-        self.blue_left_slider.setTickInterval(25)
+        self.blue_left_slider.setTickPosition(QSlider.NoTicks)
         self.blue_left_value_label = QLabel("1.0")
         self.blue_left_slider.valueChanged.connect(self.slider_changed)
         
@@ -758,10 +923,9 @@ class ToneCurveEditor(QMainWindow):
         
         blue_right_label = QLabel("Right:")
         self.blue_right_slider = QSlider(Qt.Horizontal)
-        self.blue_right_slider.setRange(50, 200)
+        self.blue_right_slider.setRange(1, 200)
         self.blue_right_slider.setValue(100)
-        self.blue_right_slider.setTickPosition(QSlider.TicksBelow)
-        self.blue_right_slider.setTickInterval(25)
+        self.blue_right_slider.setTickPosition(QSlider.NoTicks)
         self.blue_right_value_label = QLabel("1.0")
         self.blue_right_slider.valueChanged.connect(self.slider_changed)
         
@@ -772,11 +936,13 @@ class ToneCurveEditor(QMainWindow):
         # Add separator
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
+        separator.setFrameShadow(QFrame.Plain)
+        separator.setStyleSheet("background-color: #333333; max-height: 1px;")  # Thin subtle line
         layout.addWidget(separator, 7, 0, 1, 4)
         
         # Title for additional adjustments section
-        additional_label = QLabel("<b>Additional Adjustments</b>")
+        additional_label = QLabel("Additional Adjustments")
+        additional_label.setStyleSheet("font-size: 12px; color: #aaaaaa;")  # Subtle header
         layout.addWidget(additional_label, 8, 0, 1, 4)
         
         # Exposure slider
@@ -784,8 +950,7 @@ class ToneCurveEditor(QMainWindow):
         self.exposure_slider = QSlider(Qt.Horizontal)
         self.exposure_slider.setRange(-100, 100)  # -1.0 to +1.0
         self.exposure_slider.setValue(0)         # Default is 0 (no change)
-        self.exposure_slider.setTickPosition(QSlider.TicksBelow)
-        self.exposure_slider.setTickInterval(25)
+        self.exposure_slider.setTickPosition(QSlider.NoTicks)
         self.exposure_value_label = QLabel("0.0")
         self.exposure_slider.valueChanged.connect(self.slider_changed)
         
@@ -798,14 +963,32 @@ class ToneCurveEditor(QMainWindow):
         self.contrast_slider = QSlider(Qt.Horizontal)
         self.contrast_slider.setRange(-100, 100)  # -1.0 to +1.0
         self.contrast_slider.setValue(0)         # Default is 0 (no change)
-        self.contrast_slider.setTickPosition(QSlider.TicksBelow)
-        self.contrast_slider.setTickInterval(25)
+        self.contrast_slider.setTickPosition(QSlider.NoTicks)
         self.contrast_value_label = QLabel("0.0")
         self.contrast_slider.valueChanged.connect(self.slider_changed)
         
         layout.addWidget(contrast_label, 10, 0)
         layout.addWidget(self.contrast_slider, 10, 1, 1, 2)
         layout.addWidget(self.contrast_value_label, 10, 3)
+        
+        # Crop slider
+        crop_label = QLabel("Crop:")
+        self.crop_slider = QSlider(Qt.Horizontal)
+        self.crop_slider.setRange(0, 100)  # 0-10% in 0.1% increments
+        self.crop_slider.setValue(0)
+        self.crop_slider.setTickPosition(QSlider.NoTicks)
+        self.crop_value_label = QLabel("0.0%")
+        self.crop_slider.valueChanged.connect(self.crop_slider_changed)
+        
+        layout.addWidget(crop_label, 11, 0)
+        layout.addWidget(self.crop_slider, 11, 1, 1, 2)
+        layout.addWidget(self.crop_value_label, 11, 3)
+        
+        # Auto-crop button
+        self.auto_crop_button = QPushButton("Auto-crop (5%)")
+        self.auto_crop_button.clicked.connect(self.apply_auto_crop)
+        self.auto_crop_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
+        layout.addWidget(self.auto_crop_button, 12, 1, 1, 2)
     
     def get_current_image_key(self):
         """Get a unique key for the current image for settings storage"""
@@ -830,7 +1013,8 @@ class ToneCurveEditor(QMainWindow):
             'exposure': self.exposure_slider.value() / 100.0,
             'contrast': self.contrast_slider.value() / 100.0,
             'rotation': self.processor.rotation_angle,
-            'flipped': self.processor.is_flipped
+            'flipped': self.processor.is_flipped,
+            'zoom_factor': self.processor.zoom_factor
         }
     
     def load_image_settings(self, key):
@@ -862,6 +1046,12 @@ class ToneCurveEditor(QMainWindow):
             self.processor.rotation_angle = settings['rotation']
             self.processor.is_flipped = settings['flipped']
             
+            # Apply zoom factor if it exists
+            if 'zoom_factor' in settings:
+                self.processor.zoom_factor = settings['zoom_factor']
+                # Update the crop slider to match the stored value
+                self.crop_slider.setValue(int(settings['zoom_factor'] * 1000))
+            
             return True
         
         return False
@@ -876,6 +1066,7 @@ class ToneCurveEditor(QMainWindow):
         self.blue_right_slider.setValue(100)
         self.exposure_slider.setValue(0)
         self.contrast_slider.setValue(0)
+        self.crop_slider.setValue(0)
         
     def slider_changed(self):
         """
@@ -1074,7 +1265,9 @@ class ToneCurveEditor(QMainWindow):
             
             if inverted_image is not None:
                 # Try to load saved settings or use defaults
-                if not self.load_image_settings(image_key):
+                settings_loaded = self.load_image_settings(image_key)
+                
+                if not settings_loaded:
                     # Reset to defaults if no saved settings
                     self.reset_sliders()
                     self.processor.reset_transformations()
@@ -1106,7 +1299,7 @@ class ToneCurveEditor(QMainWindow):
                 )
                 
                 # Update window title
-                self.setWindowTitle(f'Tone Curve Editor - {raw_file.name} ({self.current_index + 1}/{len(self.image_files)})')
+                self.setWindowTitle(f'Orpheus Negative Lab - {raw_file.name} ({self.current_index + 1}/{len(self.image_files)})')
                 
         except Exception as e:
             print(f"Error loading image: {e}")
@@ -1186,7 +1379,7 @@ class ToneCurveEditor(QMainWindow):
             key = self.get_current_image_key()
             if key and key in self.image_settings:
                 del self.image_settings[key]
-    
+
     def update_ui_state(self):
         """Update the enabled/disabled state of UI elements"""
         has_images = len(self.image_files) > 0
@@ -1202,6 +1395,8 @@ class ToneCurveEditor(QMainWindow):
         self.rotate_button.setEnabled(has_processed)
         self.flip_button.setEnabled(has_processed)
         self.reset_button.setEnabled(has_processed)
+        self.crop_slider.setEnabled(has_processed)
+        self.auto_crop_button.setEnabled(has_processed)
         
         # Update all sliders
         self.red_left_slider.setEnabled(has_current)
@@ -1223,12 +1418,6 @@ class ToneCurveEditor(QMainWindow):
         open_action = file_menu.addAction('Open Directory...')
         open_action.triggered.connect(self.open_directory)
         
-        save_action = file_menu.addAction('Save Current Image')
-        save_action.triggered.connect(self.save_current_image)
-        
-        save_all_action = file_menu.addAction('Process All Images')
-        save_all_action.triggered.connect(self.process_all_images)
-        
         file_menu.addSeparator()
         
         exit_action = file_menu.addAction('Exit')
@@ -1236,6 +1425,14 @@ class ToneCurveEditor(QMainWindow):
         
         # Tools menu
         tools_menu = menubar.addMenu('Tools')
+        
+        save_action = tools_menu.addAction('Save Current Image')
+        save_action.triggered.connect(self.save_current_image)
+        
+        save_all_action = tools_menu.addAction('Process All Images')
+        save_all_action.triggered.connect(self.process_all_images)
+        
+        tools_menu.addSeparator()
         
         # Add keyboard shortcuts toggle action
         self.toggle_shortcuts_action = QAction('Enable Keyboard Shortcuts', self)
@@ -1289,7 +1486,7 @@ class ToneCurveEditor(QMainWindow):
             QApplication.beep()
             
     def save_current_image(self):
-        """Save the current processed image"""
+        """Save the current processed image with a white border"""
         if self.current_index < 0 or self.processor.processed_image is None:
             return
             
@@ -1302,8 +1499,9 @@ class ToneCurveEditor(QMainWindow):
         output_filename = raw_file.stem + ".jpg"
         output_path = os.path.join(output_dir, output_filename)
         
-        # Save the image
-        if self.processor.save_as_jpg(output_path):
+        # Save the image with a 50px white border
+        if self.processor.save_as_jpg(output_path, add_border=True, border_size=100):
+            self.statusBar.showMessage(f"Image saved with white border to: {output_path}", 3000)
             print(f"Image saved to: {output_path}")
             
     def process_all_images(self):
@@ -1328,10 +1526,19 @@ class ToneCurveEditor(QMainWindow):
         # Process each file
         successful = 0
         failed = 0
+        total_images = len(self.image_files)
+        
+        # Show initial progress in status bar
+        self.statusBar.showMessage(f"Processing images: 0/{total_images} completed...")
+        QApplication.processEvents()  # Update the UI
         
         for i, raw_file in enumerate(self.image_files):
             try:
-                print(f"Processing ({i+1}/{len(self.image_files)}): {raw_file.name}")
+                # Update status bar with current progress
+                self.statusBar.showMessage(f"Processing images: {i}/{total_images} - Current: {raw_file.name}")
+                QApplication.processEvents()  # Force UI update
+                
+                print(f"Processing ({i+1}/{total_images}): {raw_file.name}")
                 
                 # Create output filename
                 output_filename = raw_file.stem + ".jpg"
@@ -1349,21 +1556,47 @@ class ToneCurveEditor(QMainWindow):
                     b_left_slope, b_right_slope,
                     exposure, contrast
                 )
-                processor.save_as_jpg()
+                
+                # Always apply 5% crop for batch processing
+                processor.zoom_factor = 0.05  # 5% crop
+                processed_image, _ = processor.apply_triangle_tone_curves()
+                
+                # Save with white border
+                processor.save_as_jpg(add_border=True, border_size=100)
                 
                 successful += 1
+                
+                # Update status bar with success count
+                self.statusBar.showMessage(f"Processing images: {i+1}/{total_images} - Completed: {successful}, Failed: {failed}")
+                QApplication.processEvents()  # Force UI update
                 
             except Exception as e:
                 failed += 1
                 print(f"Error processing {raw_file}: {str(e)}")
+                
+                # Update status bar with error info
+                self.statusBar.showMessage(f"Processing images: {i+1}/{total_images} - Error with {raw_file.name}")
+                QApplication.processEvents()  # Force UI update
         
         # Print summary
         print(f"\nProcessing complete! Successfully processed: {successful}, Failed: {failed}")
+        self.statusBar.showMessage(f"Processing complete! Processed {successful} images with 5% crop and white borders. Failed: {failed}", 5000)
 
     def show_user_guide(self):
         """Display the user guide for the application"""
         guide_text = """
-<h2>Tone Curve Editor - User Guide</h2>
+<html>
+<head>
+<style>
+    body { font-family: 'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: #e0e0e0; }
+    h2 { font-weight: 300; color: #ffffff; }
+    h3 { font-weight: 400; color: #cccccc; }
+    ul { margin-left: 15px; }
+    li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<h2>Orpheus Negative Lab - User Guide</h2>
 
 <h3>Getting Started</h3>
 <p>1. Open a directory containing RAW image files (.CR2, .CR3) using <b>File > Open Directory</b>.</p>
@@ -1381,6 +1614,8 @@ class ToneCurveEditor(QMainWindow):
 <ul>
     <li>Exposure: Adjust overall brightness (-1.0 to +1.0)</li>
     <li>Contrast: Adjust image contrast (-1.0 to +1.0)</li>
+    <li>Crop: Adjust crop percentage (0-10%) to remove unwanted border artifacts</li>
+    <li>Auto-crop (5%): Automatically applies a 5% crop to the image edges</li>
 </ul>
 
 <h3>Image Transformations</h3>
@@ -1406,11 +1641,13 @@ class ToneCurveEditor(QMainWindow):
 
 <h3>Saving Images</h3>
 <ul>
-    <li><b>Save</b>: Saves the current image as a JPG</li>
-    <li><b>Process All Images</b>: Processes all images with the current settings</li>
+    <li><b>Save</b>: Saves the current image as a JPG with a 50px white border</li>
+    <li><b>Process All Images</b>: Processes all images with the current settings and adds white borders</li>
 </ul>
 
 <p>All processed images are saved to a 'new_positives' folder in the current directory.</p>
+</body>
+</html>
 """
         
         msg_box = QMessageBox(self)
@@ -1423,10 +1660,21 @@ class ToneCurveEditor(QMainWindow):
     def show_about(self):
         """Display information about the application"""
         about_text = """
-<h2>Tone Curve Editor</h2>
+<html>
+<head>
+<style>
+    body { font-family: 'Roboto', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: #e0e0e0; }
+    h2 { font-weight: 300; color: #ffffff; }
+    p { margin: 8px 0; }
+</style>
+</head>
+<body>
+<h2>Orpheus Negative Lab</h2>
 <p>Version 1.0</p>
 <p>A powerful tool for processing RAW images with advanced tone curve adjustments.</p>
 <p>Designed for creating inverted negative film images with precise control.</p>
+</body>
+</html>
 """
         
         msg_box = QMessageBox(self)
@@ -1450,6 +1698,34 @@ class ToneCurveEditor(QMainWindow):
         else:
             self.shortcuts_label.setText("Keyboard Shortcuts: Disabled")
             self.statusBar.showMessage("Keyboard shortcuts disabled", 3000)
+
+    def crop_slider_changed(self):
+        """Handle changes to the crop slider value"""
+        # Convert the slider value to a percentage (0-10%)
+        zoom_percent = self.crop_slider.value() / 10.0
+        self.crop_value_label.setText(f"{zoom_percent:.1f}%")
+        
+        # Update the processor's zoom factor
+        if self.processor.inverted_image is not None:
+            self.processor.zoom_factor = zoom_percent / 100.0  # Convert to decimal (0.0-0.1)
+            
+            # Reapply transformations with the new zoom factor
+            processed_image, tone_curves = self.processor.apply_triangle_tone_curves()
+            
+            # Update the image display
+            self.image_viewer.set_image(processed_image)
+            
+            # Save the current settings
+            self.save_current_image_settings()
+    
+    def apply_auto_crop(self):
+        """Apply automatic 5% crop to the current image"""
+        if self.processor.inverted_image is not None:
+            # Set crop slider to 5%
+            self.crop_slider.setValue(50)  # 50/10 = 5%
+            
+            # This will trigger crop_slider_changed which will update the image
+            self.statusBar.showMessage("Applied 5% auto-crop", 3000)
 
 
 def main():
