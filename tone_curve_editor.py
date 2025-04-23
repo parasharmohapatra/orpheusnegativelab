@@ -984,11 +984,28 @@ class ToneCurveEditor(QMainWindow):
         layout.addWidget(self.crop_slider, 11, 1, 1, 2)
         layout.addWidget(self.crop_value_label, 11, 3)
         
+        # Create horizontal layout for buttons
+        button_widget = QWidget()
+        button_layout = QHBoxLayout(button_widget)
+        button_layout.setContentsMargins(0, 0, 0, 0)  # No margins
+        button_layout.setSpacing(6)  # Small spacing between buttons
+        
         # Auto-crop button
         self.auto_crop_button = QPushButton("Auto-crop (5%)")
         self.auto_crop_button.clicked.connect(self.apply_auto_crop)
         self.auto_crop_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
-        layout.addWidget(self.auto_crop_button, 12, 1, 1, 2)
+        
+        # Add Auto-Warm button
+        self.auto_warm_button = QPushButton("Auto-Warm")
+        self.auto_warm_button.clicked.connect(self.apply_auto_warm)
+        self.auto_warm_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
+        
+        # Add buttons to the horizontal layout
+        button_layout.addWidget(self.auto_crop_button)
+        button_layout.addWidget(self.auto_warm_button)
+        
+        # Add the button container to the main grid layout
+        layout.addWidget(button_widget, 12, 1, 1, 2)
     
     def get_current_image_key(self):
         """Get a unique key for the current image for settings storage"""
@@ -1397,6 +1414,7 @@ class ToneCurveEditor(QMainWindow):
         self.reset_button.setEnabled(has_processed)
         self.crop_slider.setEnabled(has_processed)
         self.auto_crop_button.setEnabled(has_processed)
+        self.auto_warm_button.setEnabled(has_processed)  # Enable/disable Auto-Warm button
         
         # Update all sliders
         self.red_left_slider.setEnabled(has_current)
@@ -1726,6 +1744,28 @@ class ToneCurveEditor(QMainWindow):
             
             # This will trigger crop_slider_changed which will update the image
             self.statusBar.showMessage("Applied 5% auto-crop", 3000)
+            
+    def apply_auto_warm(self):
+        """Apply auto-warm filter by changing slider values"""
+        if self.processor.inverted_image is not None:
+            # Apply warming effect according to specifications:
+            # 1. Right red: 20% higher than default (120)
+            # 2. Right green: 10% lower than default (90)
+            # 3. Left blue: 30% higher than default (130)
+            
+            # Set default = 100 and calculate new values
+            default_value = 100
+            red_right_value = int(default_value * 1.2)  # 20% higher
+            green_right_value = int(default_value * 0.9)  # 10% lower
+            blue_left_value = int(default_value * 1.3)  # 30% higher
+            
+            # Apply new values to sliders
+            self.red_right_slider.setValue(red_right_value)
+            self.green_right_slider.setValue(green_right_value)
+            self.blue_left_slider.setValue(blue_left_value)
+            
+            # The slider_changed function will handle updating the image
+            self.statusBar.showMessage("Applied warming filter", 3000)
 
 
 def main():
