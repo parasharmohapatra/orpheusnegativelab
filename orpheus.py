@@ -981,17 +981,50 @@ class ToneCurveEditor(QMainWindow):
         # Auto-crop button
         self.auto_crop_button = QPushButton("Auto-crop (5%)")
         self.auto_crop_button.clicked.connect(self.apply_auto_crop)
-        self.auto_crop_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
+        self.auto_crop_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a2a;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #444444;
+            }
+            QPushButton:pressed {
+                background-color: #666666;
+            }
+        """)  # Flatten button with animation
         
         # Add Auto-Warm button
         self.auto_warm_button = QPushButton("Auto-Warm")
         self.auto_warm_button.clicked.connect(self.apply_auto_warm)
-        self.auto_warm_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
+        self.auto_warm_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a2a;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #444444;
+            }
+            QPushButton:pressed {
+                background-color: #666666;
+            }
+        """)  # Flatten button with animation
         
         # Add Auto Gamma button
         self.auto_gamma_button = QPushButton("Auto Gamma")
         self.auto_gamma_button.clicked.connect(self.apply_auto_gamma)
-        self.auto_gamma_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")
+        self.auto_gamma_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2a2a2a;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #444444;
+            }
+            QPushButton:pressed {
+                background-color: #666666;
+            }
+        """)  # Flatten button with animation
         
         # Add buttons to the horizontal layout
         button_layout.addWidget(self.auto_crop_button)
