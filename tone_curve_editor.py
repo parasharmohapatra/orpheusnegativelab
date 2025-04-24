@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QLabel, QPushButton, QSlider, QFileDialog, QSplitter, QFrame,
                             QSpacerItem, QSizePolicy, QGridLayout, QScrollArea, QMessageBox,
-                            QAction, QToolBar, QStatusBar, QMenu, QCheckBox)
+                            QAction, QToolBar, QStatusBar, QMenu, QCheckBox, QDialog, QTextEdit)
 from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor, QKeyEvent, QIcon, QFontDatabase
 from PyQt5.QtCore import Qt, QBuffer, QIODevice, QTimer, QPoint, QRectF
 
@@ -188,14 +188,18 @@ class ToneCurveProcessor:
         # Apply triangle-based tone curves
         for i, color in enumerate(colors):
             try:
-                hist = cv2.calcHist([rgb_image], [i], None, [256], [0, 256]).flatten()
+                # Mask out pixel values 0-5 and 245-255 for histogram calculation
+                channel = rgb_image[:, :, i]
+                mask = ((channel > 5) & (channel < 245)).astype(np.uint8)
+                # cv2.calcHist expects a mask of 0/255, so multiply by 255
+                mask = mask * 255
+                hist = cv2.calcHist([rgb_image], [i], mask, [256], [0, 256]).flatten()
                 left, peak, right = narrow_dominant_triangle(hist)
 
                 # Apply the current slopes for this channel
                 tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
                 tone_curves.append(tone_curve)
 
-                channel = rgb_image[:, :, i]
                 transformed_channel = cv2.LUT(channel, tone_curve)
                 transformed_channels.append(transformed_channel)
             except Exception as e:
@@ -1222,8 +1226,15 @@ class ToneCurveEditor(QMainWindow):
         
         for i, color in enumerate(colors):
             try:
-                hist = cv2.calcHist([rgb_image], [i], None, [256], [0, 256]).flatten()
+                # Mask out pixel values 0-10 and 245-255 for histogram calculation
+                channel = rgb_image[:, :, i]
+                mask = ((channel > 10) & (channel < 245)).astype(np.uint8)
+                # cv2.calcHist expects a mask of 0/255, so multiply by 255
+                mask = mask * 255
+                hist = cv2.calcHist([rgb_image], [i], mask, [256], [0, 256]).flatten()
                 left, peak, right = narrow_dominant_triangle(hist)
+
+                # Apply the current slopes for this channel
                 tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
                 tone_curves.append(tone_curve)
             except Exception as e:
@@ -1509,7 +1520,7 @@ class ToneCurveEditor(QMainWindow):
             return
             
         # Create output directory if it doesn't exist
-        output_dir = os.path.join(self.current_directory, 'new_positives')
+        output_dir = os.path.join(self.current_directory, 'onl_positives')
         os.makedirs(output_dir, exist_ok=True)
         
         # Create output path
@@ -1528,7 +1539,7 @@ class ToneCurveEditor(QMainWindow):
             return
             
         # Create output directory
-        output_dir = os.path.join(self.current_directory, 'new_positives')
+        output_dir = os.path.join(self.current_directory, 'onl_positives')
         os.makedirs(output_dir, exist_ok=True)
         
         # Get current slider values
@@ -1663,17 +1674,33 @@ class ToneCurveEditor(QMainWindow):
     <li><b>Process All Images</b>: Processes all images with the current settings and adds white borders</li>
 </ul>
 
-<p>All processed images are saved to a 'new_positives' folder in the current directory.</p>
+<p>All processed images are saved to a 'onl_positives' folder in the current directory.</p>
 </body>
 </html>
 """
-        
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("User Guide")
-        msg_box.setTextFormat(Qt.RichText)
-        msg_box.setText(guide_text)
-        msg_box.setStandardButtons(QMessageBox.Ok)
-        msg_box.exec_()
+        # Custom dialog for the user guide
+        dlg = QDialog(self)
+        dlg.setWindowTitle("User Guide")
+        dlg.setModal(True)
+        layout = QVBoxLayout(dlg)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setHtml(guide_text)
+        text_edit.setMinimumWidth(600)
+        text_edit.setMinimumHeight(400)
+        text_edit.setStyleSheet("background-color: #232629; color: #e0e0e0;")
+        layout.addWidget(text_edit)
+
+        btn = QPushButton("Close")
+        btn.clicked.connect(dlg.accept)
+        layout.addWidget(btn)
+
+        # Set dialog size to a percentage of the screen
+        screen = QApplication.primaryScreen().geometry()
+        dlg.resize(int(screen.width() * 0.7), int(screen.height() * 0.7))
+        dlg.setMaximumSize(screen.width(), screen.height())
+        dlg.exec_()
         
     def show_about(self):
         """Display information about the application"""
