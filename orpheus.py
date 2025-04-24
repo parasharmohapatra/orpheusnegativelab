@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QLabel, QPushButton, QSlider, QFileDialog, QSplitter, QFrame,
                             QSpacerItem, QSizePolicy, QGridLayout, QScrollArea, QMessageBox,
-                            QAction, QToolBar, QStatusBar, QMenu, QCheckBox, QDialog, QTextEdit)
+                            QAction, QToolBar, QStatusBar, QMenu, QCheckBox, QDialog, QTextEdit, QProgressDialog)
 from PyQt5.QtGui import QPixmap, QImage, QWheelEvent, QTransform, QCursor, QKeyEvent, QIcon, QFontDatabase
 from PyQt5.QtCore import Qt, QBuffer, QIODevice, QTimer, QPoint, QRectF
 
@@ -37,9 +37,9 @@ class ToneCurveProcessor:
         self.b_left_slope = 1.0
         self.b_right_slope = 1.0
         
-        # Default exposure and contrast values
+        # Default exposure and gamma values
         self.exposure = 0.0  # Exposure adjustment (0.0 = no change)
-        self.contrast = 0.0  # Contrast adjustment (0.0 = no change)
+        self.gamma = 1.0  # Gamma adjustment (1.0 = no change)
         
         # Transformation state
         self.rotation_angle = 0  # In 90-degree increments (0, 90, 180, 270)
@@ -72,7 +72,7 @@ class ToneCurveProcessor:
                                   r_left_slope=None, r_right_slope=None, 
                                   g_left_slope=None, g_right_slope=None, 
                                   b_left_slope=None, b_right_slope=None, 
-                                  exposure=None, contrast=None):
+                                  exposure=None, gamma=None):
         """
         Apply triangle-based tone curves and additional adjustments to an input RGB image.
 
@@ -85,7 +85,7 @@ class ToneCurveProcessor:
             b_left_slope (float): Left slope adjustment for blue channel.
             b_right_slope (float): Right slope adjustment for blue channel.
             exposure (float): Exposure adjustment value (-1.0 to 1.0).
-            contrast (float): Contrast adjustment value (-1.0 to 1.0).
+            gamma (float): Gamma adjustment value (0.1 to 3.0).
 
         Returns:
             numpy.ndarray: The transformed image after applying adjustments.
@@ -111,8 +111,8 @@ class ToneCurveProcessor:
             self.b_right_slope = b_right_slope
         if exposure is not None:
             self.exposure = exposure
-        if contrast is not None:
-            self.contrast = contrast
+        if gamma is not None:
+            self.gamma = gamma
             
         left_slopes = [self.r_left_slope, self.g_left_slope, self.b_left_slope]
         right_slopes = [self.r_right_slope, self.g_right_slope, self.b_right_slope]
@@ -235,29 +235,13 @@ class ToneCurveProcessor:
             # Convert back to uint8
             transformed_image = img_float.astype(np.uint8)
         
-        # Apply contrast adjustment
-        if self.contrast != 0.0:
+        # Apply gamma adjustment
+        if self.gamma != 1.0:
             # Convert to float for processing
-            img_float = transformed_image.astype(np.float32)
-            
-            # Calculate the midpoint (128 for 8-bit images)
-            midpoint = 128
-            
-            # Apply contrast adjustment
-            if self.contrast > 0:
-                # Increase contrast: stretch values away from midpoint
-                factor = 1.0 + self.contrast
-                img_float = (img_float - midpoint) * factor + midpoint
-            else:
-                # Decrease contrast: compress values toward midpoint
-                factor = 1.0 + self.contrast  # Note: contrast is negative here
-                img_float = (img_float - midpoint) * factor + midpoint
-            
-            # Clip values to valid range
-            img_float = np.clip(img_float, 0, 255)
-            
-            # Convert back to uint8
-            transformed_image = img_float.astype(np.uint8)
+            img_float = transformed_image.astype(np.float32) / 255.0
+            img_gamma = np.power(img_float, 1.0 / self.gamma)
+            img_gamma = np.clip(img_gamma * 255.0, 0, 255).astype(np.uint8)
+            transformed_image = img_gamma
         
         self.processed_image = transformed_image
         
@@ -533,7 +517,7 @@ class HistogramCanvas(FigureCanvas):
         
         # Set y-limits for tone curves
         for ax in self.twin_axes:
-            ax.set_ylim([0, 255])
+            ax.set_ylim(0, 255)
         
         # Update layout safely
         try:
@@ -962,18 +946,18 @@ class ToneCurveEditor(QMainWindow):
         layout.addWidget(self.exposure_slider, 9, 1, 1, 2)
         layout.addWidget(self.exposure_value_label, 9, 3)
         
-        # Contrast slider
-        contrast_label = QLabel("Contrast:")
-        self.contrast_slider = QSlider(Qt.Horizontal)
-        self.contrast_slider.setRange(-100, 100)  # -1.0 to +1.0
-        self.contrast_slider.setValue(0)         # Default is 0 (no change)
-        self.contrast_slider.setTickPosition(QSlider.NoTicks)
-        self.contrast_value_label = QLabel("0.0")
-        self.contrast_slider.valueChanged.connect(self.slider_changed)
+        # Gamma slider
+        gamma_label = QLabel("Gamma:")
+        self.gamma_slider = QSlider(Qt.Horizontal)
+        self.gamma_slider.setRange(10, 300)  # 0.1 to 3.0
+        self.gamma_slider.setValue(100)      # Default is 1.0 (no change)
+        self.gamma_slider.setTickPosition(QSlider.NoTicks)
+        self.gamma_value_label = QLabel("1.00")
+        self.gamma_slider.valueChanged.connect(self.slider_changed)
         
-        layout.addWidget(contrast_label, 10, 0)
-        layout.addWidget(self.contrast_slider, 10, 1, 1, 2)
-        layout.addWidget(self.contrast_value_label, 10, 3)
+        layout.addWidget(gamma_label, 10, 0)
+        layout.addWidget(self.gamma_slider, 10, 1, 1, 2)
+        layout.addWidget(self.gamma_value_label, 10, 3)
         
         # Crop slider
         crop_label = QLabel("Crop:")
@@ -1004,9 +988,15 @@ class ToneCurveEditor(QMainWindow):
         self.auto_warm_button.clicked.connect(self.apply_auto_warm)
         self.auto_warm_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")  # Flatten button
         
+        # Add Auto Gamma button
+        self.auto_gamma_button = QPushButton("Auto Gamma")
+        self.auto_gamma_button.clicked.connect(self.apply_auto_gamma)
+        self.auto_gamma_button.setStyleSheet("background-color: #2a2a2a; padding: 4px;")
+        
         # Add buttons to the horizontal layout
         button_layout.addWidget(self.auto_crop_button)
         button_layout.addWidget(self.auto_warm_button)
+        button_layout.addWidget(self.auto_gamma_button)
         
         # Add the button container to the main grid layout
         layout.addWidget(button_widget, 12, 1, 1, 2)
@@ -1032,7 +1022,7 @@ class ToneCurveEditor(QMainWindow):
             'b_left_slope': self.blue_left_slider.value() / 100.0,
             'b_right_slope': self.blue_right_slider.value() / 100.0,
             'exposure': self.exposure_slider.value() / 100.0,
-            'contrast': self.contrast_slider.value() / 100.0,
+            'gamma': self.gamma_slider.value() / 100.0,
             'rotation': self.processor.rotation_angle,
             'flipped': self.processor.is_flipped,
             'zoom_factor': self.processor.zoom_factor
@@ -1057,11 +1047,11 @@ class ToneCurveEditor(QMainWindow):
             if 'b_right_slope' in settings:
                 self.blue_right_slider.setValue(int(settings['b_right_slope'] * 100))
             
-            # Apply stored exposure and contrast values if they exist
+            # Apply stored exposure and gamma values if they exist
             if 'exposure' in settings:
                 self.exposure_slider.setValue(int(settings['exposure'] * 100))
-            if 'contrast' in settings:
-                self.contrast_slider.setValue(int(settings['contrast'] * 100))
+            if 'gamma' in settings:
+                self.gamma_slider.setValue(int(settings['gamma'] * 100))
             
             # Update processor transformation state
             self.processor.rotation_angle = settings['rotation']
@@ -1086,7 +1076,7 @@ class ToneCurveEditor(QMainWindow):
         self.blue_left_slider.setValue(100)
         self.blue_right_slider.setValue(100)
         self.exposure_slider.setValue(0)
-        self.contrast_slider.setValue(0)
+        self.gamma_slider.setValue(100)
         self.crop_slider.setValue(0)
         
     def slider_changed(self):
@@ -1102,7 +1092,7 @@ class ToneCurveEditor(QMainWindow):
         self.blue_left_value_label.setText(f"{self.blue_left_slider.value() / 100.0:.1f}")
         self.blue_right_value_label.setText(f"{self.blue_right_slider.value() / 100.0:.1f}")
         self.exposure_value_label.setText(f"{self.exposure_slider.value() / 100.0:.2f}")
-        self.contrast_value_label.setText(f"{self.contrast_slider.value() / 100.0:.2f}")
+        self.gamma_value_label.setText(f"{self.gamma_slider.value() / 100.0:.2f}")
         
         # Get current slider values
         r_left_slope = self.red_left_slider.value() / 100.0
@@ -1112,7 +1102,7 @@ class ToneCurveEditor(QMainWindow):
         b_left_slope = self.blue_left_slider.value() / 100.0
         b_right_slope = self.blue_right_slider.value() / 100.0
         exposure = self.exposure_slider.value() / 100.0
-        contrast = self.contrast_slider.value() / 100.0
+        gamma = self.gamma_slider.value() / 100.0
         
         # Store the values for later image update (after debounce)
         self.pending_slider_values = {
@@ -1123,7 +1113,7 @@ class ToneCurveEditor(QMainWindow):
             'b_left': b_left_slope,
             'b_right': b_right_slope,
             'exposure': exposure,
-            'contrast': contrast
+            'gamma': gamma
         }
         
         # Create tone curves with current values (without applying to image)
@@ -1136,7 +1126,7 @@ class ToneCurveEditor(QMainWindow):
             self.processor.b_left_slope = b_left_slope
             self.processor.b_right_slope = b_right_slope
             self.processor.exposure = exposure
-            self.processor.contrast = contrast
+            self.processor.gamma = gamma
             
             # Calculate tone curves for visualization only
             tone_curves = self.calculate_tone_curves_only(self.processor.inverted_image)
@@ -1182,7 +1172,7 @@ class ToneCurveEditor(QMainWindow):
                 right_idx = peak_idx + np.argmax(right_mask)
                 
             return left_idx, peak_idx, right_idx
-        
+
         def create_tone_curve(left, right, left_slope, right_slope, length=256):
             # Create base curve
             curve = np.zeros(length, dtype=np.uint8)
@@ -1239,7 +1229,7 @@ class ToneCurveEditor(QMainWindow):
                 tone_curves.append(tone_curve)
             except Exception as e:
                 print(f"Error processing {color} channel: {str(e)}")
-                # Create a default linear tone curve on error
+                # Create a default linear tone curve and apply it
                 default_curve = np.linspace(0, 255, 256, dtype=np.uint8)
                 tone_curves.append(default_curve)
         
@@ -1255,7 +1245,7 @@ class ToneCurveEditor(QMainWindow):
             b_left_slope = self.pending_slider_values['b_left']
             b_right_slope = self.pending_slider_values['b_right']
             exposure = self.pending_slider_values['exposure']
-            contrast = self.pending_slider_values['contrast']
+            gamma = self.pending_slider_values['gamma']
             
             # Apply tone curves to create the processed image
             processed_image, tone_curves = self.processor.apply_triangle_tone_curves(
@@ -1263,7 +1253,7 @@ class ToneCurveEditor(QMainWindow):
                 r_left_slope, r_right_slope,
                 g_left_slope, g_right_slope,
                 b_left_slope, b_right_slope,
-                exposure, contrast
+                exposure, gamma
             )
             
             # Update the image display
@@ -1308,14 +1298,14 @@ class ToneCurveEditor(QMainWindow):
                 b_left_slope = self.blue_left_slider.value() / 100.0
                 b_right_slope = self.blue_right_slider.value() / 100.0
                 exposure = self.exposure_slider.value() / 100.0
-                contrast = self.contrast_slider.value() / 100.0
+                gamma = self.gamma_slider.value() / 100.0
                 
                 processed_image, tone_curves = self.processor.apply_triangle_tone_curves(
                     inverted_image, 
                     r_left_slope, r_right_slope,
                     g_left_slope, g_right_slope,
                     b_left_slope, b_right_slope,
-                    exposure, contrast
+                    exposure, gamma
                 )
                 
                 # Display image and histogram
@@ -1337,6 +1327,12 @@ class ToneCurveEditor(QMainWindow):
     def load_next_image(self):
         """Load the next image in the directory"""
         if self.current_index < len(self.image_files) - 1:
+            # Print average intensity of current image before moving
+            img = self.processor.processed_image
+            if img is not None:
+                # Compute mean over all pixels and channels
+                avg_intensity = np.mean(img)
+                #print(f"Average intensity of current image: {avg_intensity:.2f}")
             # Save current image settings before moving
             self.save_current_image_settings()
             
@@ -1390,14 +1386,14 @@ class ToneCurveEditor(QMainWindow):
             b_left_slope = self.blue_left_slider.value() / 100.0
             b_right_slope = self.blue_right_slider.value() / 100.0
             exposure = self.exposure_slider.value() / 100.0
-            contrast = self.contrast_slider.value() / 100.0
+            gamma = self.gamma_slider.value() / 100.0
             
             processed_image, tone_curves = self.processor.apply_triangle_tone_curves(
                 None, 
                 r_left_slope, r_right_slope,
                 g_left_slope, g_right_slope,
                 b_left_slope, b_right_slope,
-                exposure, contrast
+                exposure, gamma
             )
             
             # Update histogram
@@ -1426,6 +1422,7 @@ class ToneCurveEditor(QMainWindow):
         self.crop_slider.setEnabled(has_processed)
         self.auto_crop_button.setEnabled(has_processed)
         self.auto_warm_button.setEnabled(has_processed)  # Enable/disable Auto-Warm button
+        self.auto_gamma_button.setEnabled(has_processed)  # Enable/disable Auto Gamma button
         
         # Update all sliders
         self.red_left_slider.setEnabled(has_current)
@@ -1435,7 +1432,7 @@ class ToneCurveEditor(QMainWindow):
         self.blue_left_slider.setEnabled(has_current)
         self.blue_right_slider.setEnabled(has_current)
         self.exposure_slider.setEnabled(has_current)
-        self.contrast_slider.setEnabled(has_current)
+        self.gamma_slider.setEnabled(has_current)
 
     def create_menu(self):
         """Create the application menu"""
@@ -1550,7 +1547,7 @@ class ToneCurveEditor(QMainWindow):
         b_left_slope = self.blue_left_slider.value() / 100.0
         b_right_slope = self.blue_right_slider.value() / 100.0
         exposure = self.exposure_slider.value() / 100.0
-        contrast = self.contrast_slider.value() / 100.0
+        gamma = self.gamma_slider.value() / 100.0
         
         # Process each file
         successful = 0
@@ -1583,7 +1580,7 @@ class ToneCurveEditor(QMainWindow):
                     r_left_slope, r_right_slope,
                     g_left_slope, g_right_slope,
                     b_left_slope, b_right_slope,
-                    exposure, contrast
+                    exposure, gamma
                 )
                 
                 # Always apply 5% crop for batch processing
@@ -1642,7 +1639,7 @@ class ToneCurveEditor(QMainWindow):
 <p><b>Additional Adjustments:</b></p>
 <ul>
     <li>Exposure: Adjust overall brightness (-1.0 to +1.0)</li>
-    <li>Contrast: Adjust image contrast (-1.0 to +1.0)</li>
+    <li>Gamma: Adjust image gamma (0.1 to 3.0)</li>
     <li>Crop: Adjust crop percentage (0-10%) to remove unwanted border artifacts</li>
     <li>Auto-crop (5%): Automatically applies a 5% crop to the image edges</li>
 </ul>
@@ -1664,7 +1661,7 @@ class ToneCurveEditor(QMainWindow):
     <li><b>b + Left/Right Arrow</b>: Adjust the Blue left slope</li>
     <li><b>Shift+b + Left/Right Arrow</b>: Adjust the Blue right slope</li>
     <li><b>e + Left/Right Arrow</b>: Adjust Exposure</li>
-    <li><b>c + Left/Right Arrow</b>: Adjust Contrast</li>
+    <li><b>g + Left/Right Arrow</b>: Adjust Gamma</li>
     <li><b>Cmd/Ctrl + Left/Right Arrow</b>: Navigate between images</li>
 </ul>
 
@@ -1738,7 +1735,7 @@ class ToneCurveEditor(QMainWindow):
         
         # Update shortcuts information label
         if self.keyboard_shortcuts_enabled:
-            self.shortcuts_label.setText("Keyboard Shortcuts: r/g/b + ←→ for adjustments, e/c + ←→ for exposure/contrast, ⌘←→ to navigate")
+            self.shortcuts_label.setText("Keyboard Shortcuts: r/g/b + ←→ for adjustments, e/g + ←→ for exposure/gamma, ⌘←→ to navigate")
             self.statusBar.showMessage("Keyboard shortcuts enabled", 3000)
         else:
             self.shortcuts_label.setText("Keyboard Shortcuts: Disabled")
@@ -1793,6 +1790,90 @@ class ToneCurveEditor(QMainWindow):
             
             # The slider_changed function will handle updating the image
             self.statusBar.showMessage("Applied warming filter", 3000)
+            
+    def apply_auto_gamma(self):
+        """Automatically adjusts gamma to target average intensity ~153 if current > 155, using a fast convergence algorithm. Shows a progress popup during processing and only shows the final result."""
+        if self.processor.processed_image is None:
+            self.statusBar.showMessage("No image to auto-gamma.", 3000)
+            return
+
+        import numpy as np
+        current_img = self.processor.processed_image
+        avg_intensity = np.mean(current_img)
+        #print(f"Current average intensity: {avg_intensity:.2f}")
+        if avg_intensity <= 155:
+            self.statusBar.showMessage("Average intensity already below threshold.", 3000)
+            return
+
+        # Show progress popup
+        progress = QProgressDialog("Auto Gamma in progress...", None, 0, 6, self)
+        progress.setWindowTitle("Auto Gamma")
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
+        # Fast binary search for gamma, but don't update UI each iteration
+        target = 153
+        tol = 0.01 * target
+        min_gamma = 0.5
+        max_gamma = 2.5
+        best_gamma = self.gamma_slider.value() / 100.0
+        found = False
+        prev_avg = None
+        prev_gamma = None
+        orig_gamma = self.gamma_slider.value()
+        # Get current slider values
+        r_left = self.red_left_slider.value() / 100.0
+        r_right = self.red_right_slider.value() / 100.0
+        g_left = self.green_left_slider.value() / 100.0
+        g_right = self.green_right_slider.value() / 100.0
+        b_left = self.blue_left_slider.value() / 100.0
+        b_right = self.blue_right_slider.value() / 100.0
+        exposure = self.exposure_slider.value() / 100.0
+        # Only gamma changes in search
+        for i in range(6):
+            mid_gamma = (min_gamma + max_gamma) / 2
+            processed_image, _ = self.processor.apply_triangle_tone_curves(
+                None,
+                r_left, r_right,
+                g_left, g_right,
+                b_left, b_right,
+                exposure, mid_gamma
+            )
+            if processed_image is None:
+                break
+            avg = np.mean(processed_image)
+            #print(f"Trying gamma {mid_gamma:.3f}: avg intensity {avg:.2f}")
+            if abs(avg - target) <= tol:
+                best_gamma = mid_gamma
+                found = True
+                progress.setValue(i+1)
+                QApplication.processEvents()
+                break
+            if prev_avg is not None and abs(avg - prev_avg) < 0.2 and abs(mid_gamma - prev_gamma) < 0.01:
+                progress.setValue(i+1)
+                QApplication.processEvents()
+                break
+            if avg > target:
+                max_gamma = mid_gamma
+            else:
+                min_gamma = mid_gamma
+            prev_avg = avg
+            prev_gamma = mid_gamma
+            best_gamma = mid_gamma
+            progress.setValue(i+1)
+            QApplication.processEvents()
+        progress.setValue(6)
+        progress.close()
+        # Restore gamma slider and update UI only once
+        self.gamma_slider.setValue(int(best_gamma * 100))
+        self.update_image_after_slider()
+        if found:
+            self.statusBar.showMessage(f"Auto Gamma applied: gamma={best_gamma:.3f}", 3000)
+        else:
+            self.statusBar.showMessage(f"Best gamma found: {best_gamma:.3f}", 3000)
+        self.image_viewer.set_image(self.processor.processed_image)
 
 
 def main():
