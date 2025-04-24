@@ -121,75 +121,150 @@ class ToneCurveProcessor:
         tone_curves = []
         transformed_channels = []
 
-        # Always use the original (inverted) image for histogram/triangle endpoints
-        base_image = self.inverted_image if self.inverted_image is not None else rgb_image
-
         def narrow_dominant_triangle(hist, threshold=0.05):
+            # Make sure histogram has values
             if hist.size == 0 or np.max(hist) == 0:
+                # Return default values to avoid empty sequence errors
                 return 0, 128, 255
+
             peak_idx = np.argmax(hist)
             peak_value = hist[peak_idx]
+            
+            # Safely find left boundary
             left_mask = hist[:peak_idx] >= threshold * peak_value
-            left_idx = 0
+            left_idx = 0  # Default if no values found
             if np.any(left_mask):
                 left_idx = np.argmax(left_mask)
+            
+            # Safely find right boundary
             right_mask = hist[peak_idx:] < threshold * peak_value
-            right_idx = 255
+            right_idx = 255  # Default if no values found
             if np.any(right_mask):
                 right_idx = peak_idx + np.argmax(right_mask)
+                
             return left_idx, peak_idx, right_idx
 
         def create_tone_curve(left, right, left_slope, right_slope, length=256):
+            # Create base curve
             curve = np.zeros(length, dtype=np.uint8)
+            
+            # Get the midpoint of the curve
             midpoint = (left + right) // 2
+            
+            # Apply left slope adjustment
             if left_slope != 1.0:
+                # Calculate new left point based on left_slope
+                # For slopes > 1: moves right (steeper)
+                # For slopes < 1: moves left (flatter)
                 new_left = int(midpoint - (midpoint - left) * (1.0 / left_slope))
+                
+                # Make sure adjusted point is within valid range
                 new_left = max(0, new_left)
+                
                 left = new_left
+            
+            # Apply right slope adjustment
             if right_slope != 1.0:
+                # Calculate new right point based on right_slope
+                # For slopes > 1: moves left (steeper)
+                # For slopes < 1: moves right (flatter)
                 new_right = int(midpoint + (right - midpoint) * (1.0 / right_slope))
+                
+                # Make sure adjusted point is within valid range
                 new_right = min(length - 1, new_right)
+                
                 right = new_right
+            
+            # Generate the curve
             if left < right:
                 curve[left:right + 1] = np.linspace(0, 255, right - left + 1)
                 curve[right + 1:] = 255
             else:
+                # Fallback for invalid cases
                 curve = np.linspace(0, 255, length, dtype=np.uint8)
+            
             return curve
 
-        # Compute endpoints from the original image for each channel
-        endpoints = []
+        # Apply triangle-based tone curves
         for i, color in enumerate(colors):
             try:
-                channel = base_image[:, :, i]
+                # Mask out pixel values 0-5 and 245-255 for histogram calculation
+                channel = rgb_image[:, :, i]
                 mask = ((channel > 5) & (channel < 245)).astype(np.uint8)
+                # cv2.calcHist expects a mask of 0/255, so multiply by 255
                 mask = mask * 255
-                hist = cv2.calcHist([base_image], [i], mask, [256], [0, 256]).flatten()
+                hist = cv2.calcHist([rgb_image], [i], mask, [256], [0, 256]).flatten()
                 left, peak, right = narrow_dominant_triangle(hist)
-                endpoints.append((left, peak, right))
+
+                # Apply the current slopes for this channel
+                tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
+                tone_curves.append(tone_curve)
+
+                transformed_channel = cv2.LUT(channel, tone_curve)
+                transformed_channels.append(transformed_channel)
             except Exception as e:
-                endpoints.append((0, 128, 255))
+                print(f"Error processing {color} channel: {str(e)}")
+                # Create a default linear tone curve and apply it
+                default_curve = np.linspace(0, 255, 256, dtype=np.uint8)
+                tone_curves.append(default_curve)
+                channel = rgb_image[:, :, i]
+                transformed_channel = cv2.LUT(channel, default_curve)
+                transformed_channels.append(transformed_channel)
 
-        # Now apply tone curves using those endpoints
-        for i, color in enumerate(colors):
-            left, peak, right = endpoints[i]
-            tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
-            tone_curves.append(tone_curve)
-            # Apply the tone curve to the channel
-            channel = rgb_image[:, :, i]
-            transformed_channel = cv2.LUT(channel, tone_curve)
-            transformed_channels.append(transformed_channel)
-
-        # Merge the channels back
-        processed_image = cv2.merge(transformed_channels)
-        # Exposure and contrast adjustments (unchanged)
+        # Merge channels after tone curve application
+        transformed_image = cv2.merge(transformed_channels)
+        
+        # Apply exposure adjustment
         if self.exposure != 0.0:
-            processed_image = np.clip(processed_image.astype(np.float32) + self.exposure * 64, 0, 255).astype(np.uint8)
+            # Convert to float for processing
+            img_float = transformed_image.astype(np.float32)
+            
+            # Apply exposure (values > 0 brighten, values < 0 darken)
+            if self.exposure > 0:
+                # For brightening: scale from 0 to 1.0 (max 2x brighter)
+                factor = 1.0 + self.exposure
+                img_float = img_float * factor
+            else:
+                # For darkening: scale from 0 to -1.0 (max 0.5x darker)
+                factor = 1.0 + self.exposure
+                img_float = img_float * factor
+            
+            # Clip values to valid range
+            img_float = np.clip(img_float, 0, 255)
+            
+            # Convert back to uint8
+            transformed_image = img_float.astype(np.uint8)
+        
+        # Apply contrast adjustment
         if self.contrast != 0.0:
-            factor = 1.0 + self.contrast
-            processed_image = np.clip(128 + factor * (processed_image.astype(np.float32) - 128), 0, 255).astype(np.uint8)
-        self.processed_image = processed_image
-        return processed_image, tone_curves
+            # Convert to float for processing
+            img_float = transformed_image.astype(np.float32)
+            
+            # Calculate the midpoint (128 for 8-bit images)
+            midpoint = 128
+            
+            # Apply contrast adjustment
+            if self.contrast > 0:
+                # Increase contrast: stretch values away from midpoint
+                factor = 1.0 + self.contrast
+                img_float = (img_float - midpoint) * factor + midpoint
+            else:
+                # Decrease contrast: compress values toward midpoint
+                factor = 1.0 + self.contrast  # Note: contrast is negative here
+                img_float = (img_float - midpoint) * factor + midpoint
+            
+            # Clip values to valid range
+            img_float = np.clip(img_float, 0, 255)
+            
+            # Convert back to uint8
+            transformed_image = img_float.astype(np.uint8)
+        
+        self.processed_image = transformed_image
+        
+        # Apply any stored transformations
+        self.apply_transformations()
+        
+        return self.processed_image, tone_curves
         
     def apply_transformations(self):
         """Apply stored rotation and flip transformations to the processed image"""
@@ -1051,93 +1126,125 @@ class ToneCurveEditor(QMainWindow):
             'contrast': contrast
         }
         
-        # Calculate tone curves with current values (without applying to image)
+        # Create tone curves with current values (without applying to image)
         if self.processor.inverted_image is not None:
-            # Calculate tone curves for visualization only, passing slider values directly
-            tone_curves = self.calculate_tone_curves_only(
-                self.processor.inverted_image,
-                r_left_slope, r_right_slope,
-                g_left_slope, g_right_slope,
-                b_left_slope, b_right_slope
-            )
+            # Update the processor's values (without updating the processed image)
+            self.processor.r_left_slope = r_left_slope
+            self.processor.r_right_slope = r_right_slope
+            self.processor.g_left_slope = g_left_slope
+            self.processor.g_right_slope = g_right_slope
+            self.processor.b_left_slope = b_left_slope
+            self.processor.b_right_slope = b_right_slope
+            self.processor.exposure = exposure
+            self.processor.contrast = contrast
+            
+            # Calculate tone curves for visualization only
+            tone_curves = self.calculate_tone_curves_only(self.processor.inverted_image)
+            
             # Update the histogram with the new tone curves (without updating the image)
             self.histogram_canvas.plot_histogram_and_curves(self.processor.inverted_image, tone_curves)
         
         # Restart the debounce timer for the actual image processing
         self.slider_timer.start(150)  # 150ms debounce
-
-    def calculate_tone_curves_only(self, rgb_image, r_left_slope=None, r_right_slope=None, g_left_slope=None, g_right_slope=None, b_left_slope=None, b_right_slope=None):
+    
+    def calculate_tone_curves_only(self, rgb_image):
         """
         Calculate tone curves without updating the processed image.
         Used for real-time visualization during slider movement.
         """
         if rgb_image is None:
             return None
-        # Use passed-in values if provided, otherwise fall back to processor's attributes
-        left_slopes = [
-            r_left_slope if r_left_slope is not None else self.processor.r_left_slope,
-            g_left_slope if g_left_slope is not None else self.processor.g_left_slope,
-            b_left_slope if b_left_slope is not None else self.processor.b_left_slope
-        ]
-        right_slopes = [
-            r_right_slope if r_right_slope is not None else self.processor.r_right_slope,
-            g_right_slope if g_right_slope is not None else self.processor.g_right_slope,
-            b_right_slope if b_right_slope is not None else self.processor.b_right_slope
-        ]
+        
+        left_slopes = [self.processor.r_left_slope, self.processor.g_left_slope, self.processor.b_left_slope]
+        right_slopes = [self.processor.r_right_slope, self.processor.g_right_slope, self.processor.b_right_slope]
         colors = ('r', 'g', 'b')
         tone_curves = []
-        # Always use the original (inverted) image for histogram/triangle endpoints
-        base_image = self.processor.inverted_image if self.processor.inverted_image is not None else rgb_image
+        
         def narrow_dominant_triangle(hist, threshold=0.05):
+            # Make sure histogram has values
             if hist.size == 0 or np.max(hist) == 0:
+                # Return default values to avoid empty sequence errors
                 return 0, 128, 255
+
             peak_idx = np.argmax(hist)
             peak_value = hist[peak_idx]
+            
+            # Safely find left boundary
             left_mask = hist[:peak_idx] >= threshold * peak_value
-            left_idx = 0
+            left_idx = 0  # Default if no values found
             if np.any(left_mask):
                 left_idx = np.argmax(left_mask)
+            
+            # Safely find right boundary
             right_mask = hist[peak_idx:] < threshold * peak_value
-            right_idx = 255
+            right_idx = 255  # Default if no values found
             if np.any(right_mask):
                 right_idx = peak_idx + np.argmax(right_mask)
+                
             return left_idx, peak_idx, right_idx
+        
         def create_tone_curve(left, right, left_slope, right_slope, length=256):
+            # Create base curve
             curve = np.zeros(length, dtype=np.uint8)
+            
+            # Get the midpoint of the curve
             midpoint = (left + right) // 2
+            
+            # Apply left slope adjustment
             if left_slope != 1.0:
+                # Calculate new left point based on left_slope
+                # For slopes > 1: moves right (steeper)
+                # For slopes < 1: moves left (flatter)
                 new_left = int(midpoint - (midpoint - left) * (1.0 / left_slope))
+                
+                # Make sure adjusted point is within valid range
                 new_left = max(0, new_left)
+                
                 left = new_left
+            
+            # Apply right slope adjustment
             if right_slope != 1.0:
+                # Calculate new right point based on right_slope
+                # For slopes > 1: moves left (steeper)
+                # For slopes < 1: moves right (flatter)
                 new_right = int(midpoint + (right - midpoint) * (1.0 / right_slope))
+                
+                # Make sure adjusted point is within valid range
                 new_right = min(length - 1, new_right)
+                
                 right = new_right
+            
+            # Generate the curve
             if left < right:
                 curve[left:right + 1] = np.linspace(0, 255, right - left + 1)
                 curve[right + 1:] = 255
             else:
+                # Fallback for invalid cases
                 curve = np.linspace(0, 255, length, dtype=np.uint8)
+            
             return curve
-        # Compute endpoints from the original image for each channel
-        endpoints = []
+        
         for i, color in enumerate(colors):
             try:
-                channel = base_image[:, :, i]
+                # Mask out pixel values 0-10 and 245-255 for histogram calculation
+                channel = rgb_image[:, :, i]
                 mask = ((channel > 10) & (channel < 245)).astype(np.uint8)
+                # cv2.calcHist expects a mask of 0/255, so multiply by 255
                 mask = mask * 255
-                hist = cv2.calcHist([base_image], [i], mask, [256], [0, 256]).flatten()
+                hist = cv2.calcHist([rgb_image], [i], mask, [256], [0, 256]).flatten()
                 left, peak, right = narrow_dominant_triangle(hist)
-                endpoints.append((left, peak, right))
-            except Exception as e:
-                endpoints.append((0, 128, 255))
-        # Now create tone curves using those endpoints
-        for i, color in enumerate(colors):
-            left, peak, right = endpoints[i]
-            tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
-            tone_curves.append(tone_curve)
-        return tone_curves
 
+                # Apply the current slopes for this channel
+                tone_curve = create_tone_curve(left, right, left_slopes[i], right_slopes[i])
+                tone_curves.append(tone_curve)
+            except Exception as e:
+                print(f"Error processing {color} channel: {str(e)}")
+                # Create a default linear tone curve on error
+                default_curve = np.linspace(0, 255, 256, dtype=np.uint8)
+                tone_curves.append(default_curve)
+        
+        return tone_curves
+    
     def update_image_after_slider(self):
         """Update the image after the slider debounce period"""
         if self.pending_slider_values and self.processor.inverted_image is not None:
