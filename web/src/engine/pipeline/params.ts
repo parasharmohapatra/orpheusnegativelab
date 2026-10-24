@@ -3,7 +3,7 @@ import { diag, mul, whiteBalance709 } from '../color/matrices';
 import { REC709_TO_WORKING, workingToOutput, OUTPUT_SPACES, type OutputSpaceId } from '../color/spaces';
 import type { TransferId } from '../color/transfer';
 import type { FrameStats } from './analysis';
-import { bakeCurves, isIdentityCurve } from './curves';
+import { bakeCurves, curveToLut, isIdentityCurve, LUT_SIZE, sampleLut } from './curves';
 import { findLook } from './looks';
 import { rangeLambdas, type Recipe } from './recipe';
 import { blendEndpoints, type RollStats } from './roll';
@@ -40,12 +40,12 @@ export interface RenderParams {
   hiStops: number;
   /** Camera RGB → working (linear Rec.2020), including exposure and white balance. */
   camToWork: Mat3;
-  /** 0 = linear, 1 = paper sigmoid. */
+  /** 0 = linear, 1 = paper curve (`paperLut`). */
   printMode: 0 | 1;
-  paperC: number;
-  paperX0: number;
-  paperSLo: number;
-  paperInvRange: number;
+  /** Encoded print value over x = stops from 18% grey in [PAPER_X_MIN, PAPER_X_MAX]. */
+  paperLut: Float32Array;
+  /** Exposure added by midtone metering (stops), for display. */
+  autoEv: number;
   shadows: number;
   highlights: number;
   preserveHue: boolean;
@@ -106,20 +106,42 @@ export function resolveEndpoints(
   return { base, ends: { dLo, dHi, dMed, sceneStops: recipe.convert.sceneStops ?? auto } };
 }
 
-function solvePaperX0(c: number, xb: number, xw: number, greyEncoded: number): number {
-  const s = (x: number, x0: number) => 1 / (1 + Math.exp(-c * (x - x0)));
-  const f = (x0: number) => (s(0, x0) - s(xb, x0)) / (s(xw, x0) - s(xb, x0));
-  let lo = -8;
-  let hi = 8;
-  for (let i = 0; i < 60; i++) {
-    const mid = (lo + hi) / 2;
-    if (f(mid) > greyEncoded) lo = mid;
-    else hi = mid;
+export const PAPER_X_MIN = -8;
+export const PAPER_X_MAX = 6;
+
+/**
+ * Print curves as encoded output vs stops from 18% grey. Shaped like a darkroom print:
+ * a gentle toe (shadows keep separation instead of sinking), grey at 0.46 encoded,
+ * and a long shoulder so highlights roll off rather than clip.
+ */
+const PAPER_POINTS: Record<Exclude<Recipe['tone']['printCurve'], 'linear'>, [number, number][]> = {
+  soft: [[-8, 0], [-6, 0.035], [-5, 0.07], [-4, 0.115], [-3, 0.17], [-2, 0.245], [-1, 0.345], [0, 0.46], [1, 0.63], [2, 0.8], [2.5, 0.87], [3, 0.92], [4, 0.975], [6, 1]],
+  standard: [[-8, 0], [-6, 0.02], [-5, 0.045], [-4, 0.085], [-3, 0.135], [-2, 0.205], [-1, 0.315], [0, 0.46], [1, 0.67], [2, 0.86], [2.5, 0.92], [3, 0.96], [4, 0.99], [6, 1]],
+  dense: [[-8, 0], [-6, 0.01], [-5, 0.025], [-4, 0.05], [-3, 0.09], [-2, 0.16], [-1, 0.285], [0, 0.46], [1, 0.69], [2, 0.89], [2.5, 0.94], [3, 0.975], [4, 0.995], [6, 1]],
+};
+
+/** Bake the paper curve, with contrast (stretch around grey) and blacks/whites (lift or crush the ends). */
+export function bakePaper(curve: Recipe['tone']['printCurve'], contrast: number, blacks: number, whites: number): Float32Array {
+  const pts = PAPER_POINTS[curve === 'linear' ? 'standard' : curve];
+  const span = PAPER_X_MAX - PAPER_X_MIN;
+  const base = curveToLut(pts.map(([x, y]) => ({ x: (x - PAPER_X_MIN) / span, y })), LUT_SIZE);
+  const k = Math.pow(2, contrast * 0.8);
+  const a = Math.max(-0.3, Math.min(0.3, blacks * 0.12));
+  const b = Math.max(-0.3, Math.min(0.3, whites * 0.12));
+  const out = new Float32Array(LUT_SIZE);
+  for (let i = 0; i < LUT_SIZE; i++) {
+    const x = PAPER_X_MIN + (i / (LUT_SIZE - 1)) * span;
+    let y = sampleLut(base, (x * k - PAPER_X_MIN) / span);
+    // Monotone for |a|, |b| < 1/3.
+    y = y + a * (1 - y) ** 3 + b * y ** 3;
+    out[i] = Math.min(1, Math.max(0, y));
   }
-  return (lo + hi) / 2;
+  return out;
 }
 
-const PAPER_C: Record<Recipe['tone']['printCurve'], number> = { linear: 0, soft: 0.62, standard: 0.78, dense: 0.95 };
+/** Where auto exposure puts the frame's median brightness, in stops from grey. */
+const METER_TARGET = 0.8;
+const METER_STRENGTH = 0.7;
 
 export function buildParams(
   recipe: Recipe,
@@ -171,20 +193,25 @@ export function buildParams(
     for (const k of ['temp', 'tint', 'saturation', 'vibrance'] as const) c[k] = clamp1(c[k] + (look.color[k] ?? 0) * ls);
     for (const k of ['hslHue', 'hslSat', 'hslLum'] as const) look.color[k]?.forEach((v, i) => (c[k][i] = clamp1(c[k][i] + v * ls)));
   }
-  const exposureGain = Math.pow(2, t.exposure);
+  // Midtone metering: highlights set the scale, but frames whose midtones fall low
+  // (backlit, dusk, small bright areas) are lifted part of the way. It never darkens:
+  // bright, high-key frames are already placed well by the highlight anchor.
+  let autoEv = 0;
+  if (recipe.convert.autoExposure && stats.bw.hi > stats.bw.lo) {
+    const nMed = (stats.bw.med - stats.bw.lo) / (stats.bw.hi - stats.bw.lo);
+    const nOf = filmType === 2 ? 1 - nMed : nMed;
+    const medStops = HI_STOPS + ends.sceneStops * (nOf - 1);
+    const { exp } = rangeLambdas(recipe.convert);
+    autoEv = Math.max(0, Math.min(2, METER_STRENGTH * exp * (METER_TARGET - medStops)));
+  }
+  const exposureGain = Math.pow(2, t.exposure + autoEv);
   const camToWork = mul(
     REC709_TO_WORKING,
     mul(whiteBalance709(c.temp, c.tint), mul(meta.toRec709, diag([exposureGain, exposureGain, exposureGain]))),
   );
 
   const printMode = t.printCurve === 'linear' ? 0 : 1;
-  const paperC = PAPER_C[t.printCurve] * Math.pow(2, t.contrast * 0.8);
-  const xb = -7 - t.blacks * 1.5;
-  const xw = 3 - t.whites * 1.2;
-  const paperX0 = printMode ? solvePaperX0(paperC, xb, xw, 0.46) : 0;
-  const sig = (x: number) => 1 / (1 + Math.exp(-paperC * (x - paperX0)));
-  const paperSLo = printMode ? sig(xb) : 0;
-  const paperInvRange = printMode ? 1 / (sig(xw) - paperSLo) : 1;
+  const paperLut = bakePaper(t.printCurve, t.contrast, t.blacks, t.whites);
 
   const hslActive = [...c.hslHue, ...c.hslSat, ...c.hslLum].some((v) => v !== 0);
   const cv = recipe.curves;
@@ -203,10 +230,8 @@ export function buildParams(
     hiStops: HI_STOPS,
     camToWork,
     printMode,
-    paperC,
-    paperX0,
-    paperSLo,
-    paperInvRange,
+    paperLut,
+    autoEv,
     shadows: t.shadows,
     highlights: t.highlights,
     preserveHue: t.preserveHue,

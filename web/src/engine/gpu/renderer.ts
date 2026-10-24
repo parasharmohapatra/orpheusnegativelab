@@ -63,7 +63,7 @@ export class Renderer {
     this.src = this.makeTexture(gl.LINEAR);
     this.curves = this.makeTexture(gl.NEAREST);
     gl.bindTexture(gl.TEXTURE_2D, this.curves);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, LUT_SIZE, 3, 0, gl.RED, gl.FLOAT, new Float32Array(LUT_SIZE * 3));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, LUT_SIZE, 4, 0, gl.RED, gl.FLOAT, new Float32Array(LUT_SIZE * 4));
   }
 
   private link(): WebGLProgram {
@@ -138,7 +138,6 @@ export class Renderer {
     gl.uniform1f(this.u('u_hiStops'), p.hiStops);
     m3('u_camToWork', p.camToWork);
     gl.uniform1i(this.u('u_printMode'), p.printMode);
-    gl.uniform4f(this.u('u_paper'), p.paperC, p.paperX0, p.paperSLo, p.paperInvRange);
     gl.uniform2f(this.u('u_tone'), p.shadows, p.highlights);
     gl.uniform1i(this.u('u_preserveHue'), p.preserveHue ? 1 : 0);
     gl.uniform1f(this.u('u_sat'), p.saturation);
@@ -155,11 +154,10 @@ export class Renderer {
     gl.uniform1i(this.u('u_outTransfer'), p.outTransfer);
     this.hasCurves = !!p.curves;
     gl.uniform1i(this.u('u_hasCurves'), this.hasCurves ? 1 : 0);
-    if (p.curves) {
-      gl.bindTexture(gl.TEXTURE_2D, this.curves);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, LUT_SIZE, 3, gl.RED, gl.FLOAT, p.curves);
-    }
+    gl.bindTexture(gl.TEXTURE_2D, this.curves);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    if (p.curves) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, LUT_SIZE, 3, gl.RED, gl.FLOAT, p.curves);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 3, LUT_SIZE, 1, gl.RED, gl.FLOAT, p.paperLut);
   }
 
   /** Draw into the canvas (target = null) or a float target, at width × height. */

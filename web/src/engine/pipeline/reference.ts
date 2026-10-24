@@ -11,7 +11,7 @@ import { LMS_TO_WORKING, OKLAB_M2, OKLAB_M2_INV, WORKING_TO_LMS } from '../color
 import { encode, srgbDecode } from '../color/transfer';
 import { applyAffine, type Affine } from '../geometry/transform';
 import { LUT_SIZE } from './curves';
-import { HSL_CENTRES, type RenderParams } from './params';
+import { HSL_CENTRES, PAPER_X_MAX, PAPER_X_MIN, type RenderParams } from './params';
 
 const LOG2_018 = Math.log2(0.18);
 
@@ -31,9 +31,10 @@ export function paper(p: RenderParams, v: number): number {
   let x = Math.log2(Math.max(v, 1e-10)) - LOG2_018;
   x += p.shadows * 1.5 * Math.exp(-((x + 3) ** 2) / 4.5) + p.highlights * 1.5 * Math.exp(-((x - 1.5) ** 2) / 4.5);
   if (p.printMode === 0) return 0.18 * Math.pow(2, x);
-  const s = 1 / (1 + Math.exp(-p.paperC * (x - p.paperX0)));
-  const enc = Math.min(1, Math.max(0, (s - p.paperSLo) * p.paperInvRange));
-  return srgbDecode(enc);
+  const f = Math.min(1, Math.max(0, (x - PAPER_X_MIN) / (PAPER_X_MAX - PAPER_X_MIN))) * (LUT_SIZE - 1);
+  const i = Math.min(LUT_SIZE - 2, Math.floor(f));
+  const t = f - i;
+  return srgbDecode(p.paperLut[i] * (1 - t) + p.paperLut[i + 1] * t);
 }
 
 /** Normalized, balanced density for one camera-RGB pixel (steps 1–5); exposed for the neutral picker. */

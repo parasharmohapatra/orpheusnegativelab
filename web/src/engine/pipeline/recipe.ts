@@ -52,6 +52,8 @@ export interface Recipe {
      * using a typical negative gamma.
      */
     rangeAuto: 'fill' | 'physical';
+    /** Meter midtones and nudge exposure toward a natural brightness. */
+    autoExposure: boolean;
     /** Percent of pixels allowed to clip at each end when measuring the density range. */
     blackClip: number;
     whiteClip: number;
@@ -120,6 +122,7 @@ export function defaultRecipe(): Recipe {
       midStrength: 0.75,
       sceneStops: null,
       rangeAuto: 'fill',
+      autoExposure: true,
       blackClip: 0.3,
       whiteClip: 0.3,
     },

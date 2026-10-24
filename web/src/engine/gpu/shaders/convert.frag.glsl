@@ -8,7 +8,7 @@ in vec2 v_uv;
 out vec4 outColor;
 
 uniform sampler2D u_src;
-uniform sampler2D u_curves;   // R32F, 1024 × 3
+uniform sampler2D u_curves;   // R32F, 1024 × 4: rows 0–2 RGB curves, row 3 paper curve
 
 // Canvas uv → output uv, then output uv → source uv (affine rows).
 uniform vec3 u_view0, u_view1;
@@ -22,7 +22,6 @@ uniform float u_sceneStops, u_hiStops;
 uniform mat3 u_camToWork;
 uniform mat3 u_negToOut;      // for u_mode 1: camera → output primaries
 uniform int u_printMode;
-uniform vec4 u_paper;         // c, x0, sLo, invRange
 uniform vec2 u_tone;          // shadows, highlights
 uniform bool u_preserveHue;
 uniform float u_sat, u_vib;
@@ -33,6 +32,8 @@ uniform int u_outTransfer;    // 0 sRGB, 1 γ2.2, 2 linear, 3 γ1.8
 uniform bool u_hasCurves;
 
 const float LOG2_018 = -2.4739311883324122;
+const float PAPER_X_MIN = -8.0;
+const float PAPER_X_MAX = 6.0;
 const float HSL_CENTRES[8] = float[8](25.0, 55.0, 100.0, 140.0, 195.0, 250.0, 290.0, 330.0);
 
 float srgbDecode(float x) {
@@ -57,8 +58,10 @@ float paper(float v) {
   float x = log2(max(v, 1e-10)) - LOG2_018;
   x += u_tone.x * 1.5 * exp(-(x + 3.0) * (x + 3.0) / 4.5) + u_tone.y * 1.5 * exp(-(x - 1.5) * (x - 1.5) / 4.5);
   if (u_printMode == 0) return 0.18 * exp2(x);
-  float s = 1.0 / (1.0 + exp(-u_paper.x * (x - u_paper.y)));
-  float enc = clamp((s - u_paper.z) * u_paper.w, 0.0, 1.0);
+  float f = clamp((x - PAPER_X_MIN) / (PAPER_X_MAX - PAPER_X_MIN), 0.0, 1.0) * 1023.0;
+  int i = min(1022, int(floor(f)));
+  float t = f - float(i);
+  float enc = mix(texelFetch(u_curves, ivec2(i, 3), 0).r, texelFetch(u_curves, ivec2(i + 1, 3), 0).r, t);
   return srgbDecode(enc);
 }
 

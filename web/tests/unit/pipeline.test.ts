@@ -144,8 +144,8 @@ describe('roll consistency', () => {
     const frameRatio = g(frame, 2) / g(frame, 0.5);
     const rollRatio = g(roll, 2) / g(roll, 0.5);
     expect(Math.abs(Math.log2(frameRatio))).toBeLessThan(0.15);
-    // λ_exp = 0.8 corrects 80% of a 2-stop misexposure; the rest shows through.
-    expect(rollRatio).toBeGreaterThan(1.25);
+    // λ_exp = 0.8 corrects most of a 2-stop misexposure (endpoints and metering); the rest shows through.
+    expect(rollRatio).toBeGreaterThan(1.15);
     expect(rollRatio).toBeLessThan(2);
   });
 });
@@ -197,5 +197,46 @@ describe('film looks', () => {
       r.look = { id: 'trix', strength: 1 };
     });
     for (const o of out) expect(Math.abs(o[0] - o[2])).toBeLessThan(1e-3);
+  });
+});
+
+describe('print curve and metering', () => {
+  it('standard paper has a gentle toe and keeps grey at 0.46', async () => {
+    const { bakePaper, PAPER_X_MIN, PAPER_X_MAX } = await import('../../src/engine/pipeline/params');
+    const lut = bakePaper('standard', 0, 0, 0);
+    const at = (x: number) => lut[Math.round(((x - PAPER_X_MIN) / (PAPER_X_MAX - PAPER_X_MIN)) * (lut.length - 1))];
+    expect(at(0)).toBeCloseTo(0.46, 2);
+    expect(at(-2)).toBeGreaterThan(0.18);
+    expect(at(-3)).toBeGreaterThan(0.11);
+    expect(at(3)).toBeLessThan(0.98);
+    for (const curve of ['soft', 'standard', 'dense'] as const) {
+      for (const [c, bl, wh] of [[0, 0, 0], [1, 1, 1], [-1, -1, -1]]) {
+        const l = bakePaper(curve, c, bl, wh);
+        for (let i = 1; i < l.length; i++) expect(l[i]).toBeGreaterThanOrEqual(l[i - 1] - 1e-6);
+      }
+    }
+  });
+
+  it('meters dark-median frames up, bounded, and can be turned off', () => {
+    const { img } = makeNegative(PORTRA_ISH);
+    const r = defaultRecipe();
+    const stats = analyze(img, r);
+    // Pretend the scene is mostly shadows with a small bright area.
+    const dark = { ...stats, bw: { ...stats.bw, med: stats.bw.lo + 0.2 * (stats.bw.hi - stats.bw.lo) } };
+    const on = buildParams(r, dark, null, META, 'srgb');
+    expect(on.autoEv).toBeGreaterThan(0.5);
+    expect(on.autoEv).toBeLessThanOrEqual(2);
+    r.convert.autoExposure = false;
+    expect(buildParams(r, dark, null, META, 'srgb').autoEv).toBe(0);
+  });
+});
+
+describe('metering never darkens', () => {
+  it('leaves bright-median (high-key) frames alone', () => {
+    const { img } = makeNegative(PORTRA_ISH);
+    const r = defaultRecipe();
+    const stats = analyze(img, r);
+    const bright = { ...stats, bw: { ...stats.bw, med: stats.bw.lo + 0.95 * (stats.bw.hi - stats.bw.lo) } };
+    expect(buildParams(r, bright, null, META, 'srgb').autoEv).toBe(0);
   });
 });
