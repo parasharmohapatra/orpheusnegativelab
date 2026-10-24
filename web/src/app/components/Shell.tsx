@@ -58,9 +58,6 @@ export function Header() {
         </div>
       )}
       <div className="header-actions">
-        <button type="button" className="btn" onClick={() => set('view', 'camera')} title="Take photos with a film look">
-          Camera
-        </button>
         <button type="button" className="btn" onClick={pickers.openFolder} title="Open a folder of scans">
           Open roll
         </button>
@@ -263,7 +260,6 @@ export function Filmstrip() {
 
 export function EmptyState() {
   const pickers = useFilePickers();
-  const set = useStore((s) => s.set);
   return (
     <div className="empty">
       <div className="empty-card">
@@ -283,9 +279,6 @@ export function EmptyState() {
             Choose files
           </button>
         </div>
-        <button type="button" className="btn ghost" onClick={() => set('view', 'camera')}>
-          Or take photos with a film look →
-        </button>
         <div className="empty-formats">
           RAW: CR2 · CR3 · NEF · ARW · DNG · RAF · ORF · RW2 · PEF
           <br />

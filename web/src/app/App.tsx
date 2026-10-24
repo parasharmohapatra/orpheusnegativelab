@@ -9,7 +9,6 @@ import { EmptyState, Filmstrip, Header, ToolRail } from './components/Shell';
 import { SyncDialog } from './components/SyncDialog';
 import { Viewer } from './components/Viewer';
 import { Library } from './components/Library';
-import { CameraView } from './components/CameraView';
 
 /** Collect files from a drop, descending into folders. */
 async function filesFromDrop(dt: DataTransfer): Promise<File[]> {
@@ -50,7 +49,7 @@ function useShortcuts() {
         s.selectAll();
         return;
       }
-      if (mod || s.view === 'camera') return;
+      if (mod) return;
       const lib = s.view === 'library';
       const move = (d: number) => {
         // Shift extends the selection like a file browser.
@@ -156,8 +155,6 @@ export function App() {
   useEffect(() => {
     void loadSetting<ExportSettings | null>('export', null).then((s) => s && useStore.getState().set('exportSettings', s));
   }, []);
-
-  if (view === 'camera') return <CameraView />;
 
   return (
     <div

@@ -71,17 +71,10 @@ function hslAdjust(p: RenderParams, hueDeg: number): [number, number, number] {
 }
 
 /** Full conversion of one camera-RGB pixel to an encoded output pixel in [0, 1]. */
-export function convertPixel(p: RenderParams, rgbIn: Vec3): Vec3 {
-  const rgb: Vec3 = p.srcSrgb ? [srgbDecode(rgbIn[0]), srgbDecode(rgbIn[1]), srgbDecode(rgbIn[2])] : rgbIn;
+export function convertPixel(p: RenderParams, rgb: Vec3): Vec3 {
+  const n = balancedDensity(p, rgb);
   const E: Vec3 = [0, 0, 0];
-  if (p.filmType === 3) {
-    E[0] = rgb[0];
-    E[1] = rgb[1];
-    E[2] = rgb[2];
-  } else {
-    const n = balancedDensity(p, rgb);
-    for (let c = 0; c < 3; c++) E[c] = 0.18 * Math.pow(2, p.hiStops + p.sceneStops * (n[c] - 1));
-  }
+  for (let c = 0; c < 3; c++) E[c] = 0.18 * Math.pow(2, p.hiStops + p.sceneStops * (n[c] - 1));
   const m = p.camToWork;
   const W: Vec3 = [
     m[0] * E[0] + m[1] * E[1] + m[2] * E[2],
