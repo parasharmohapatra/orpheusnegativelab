@@ -1,0 +1,23 @@
+# OS / editor
+.DS_Store
+
+# Legacy Python build output
+build/
+dist/
+.eggs/
+__pycache__/
+*.pyc
+*.dmg
+*.icns
+.python-version
+
+# Web app
+web/node_modules/
+web/dist/
+web/coverage/
+web/test-results/
+web/playwright-report/
+
+# Local tooling
+.claude/
+web/*.tsbuildinfo

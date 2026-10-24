@@ -1,76 +1,80 @@
 # Orpheus Negative Lab
 
-A desktop application for converting color (C41) and black & white film negatives into positive images using advanced, interactive tone curve editing.
+Convert colour negative, black-and-white and slide film scans into finished positives, entirely in your browser. Files never leave your device: decoding, conversion and export all run locally (WebAssembly, WebGL2, Web Workers).
 
-![Demo](data/demo.png)
+## What it does
 
-## Features
+- **Opens RAW camera scans** (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF, …) via LibRaw compiled to WebAssembly, plus 16-bit TIFFs from film scanners and JPEG/PNG.
+- **Measures the orange mask.** It finds the film base on the rebate (or you sample it), then divides it out.
+- **Inverts in density, like a darkroom print**, rather than with `255 − x`:
+  - Each channel is normalized between robust shadow and highlight densities, which equalizes the dye layers and removes crossover.
+  - Leftover midtone casts are measured on near-neutral pixels only, so colourful subjects aren't neutralized.
+- **Roll-aware.** The film base is shared across the roll. Colour balance runs per frame (like NLP's auto), per roll (film response shared, exposure kept per frame), or a blend of the two.
+- **Print look.** Paper-style curves (soft, standard, dense, linear), exposure, contrast, highlights/shadows/whites/blacks, white balance, vibrance/saturation, an 8-band colour mixer (OkLCh), and RGB and per-channel curves.
+- **Crop, rotate and straighten**, with auto-frame from the detected film border.
+- **Batch export** at full resolution: JPEG, or 8/16-bit TIFF and PNG, in sRGB, Display P3, Adobe RGB or ProPhoto, with an embedded ICC profile and an optional white border. Rendering is tiled on the GPU, so 50+ MP files work.
+- **Remembers your edits** per file (IndexedDB), with presets, sync between frames, and undo/redo.
 
-- **RAW Image Support:** Load and process RAW files from most cameras (e.g., .cr2, .cr3, .nef, .raw).
-- **Triangle-Based Tone Curves:** Adjust red, green, and blue channels independently using unique triangle-based tone curves for fine color correction.
-- **Exposure & Contrast:** Real-time sliders for exposure and contrast adjustments.
-- **Image Transformations:** Rotate and flip images for proper orientation.
-- **Batch Processing:** Process all images in a directory with your chosen settings.
-- **Modern UI:** Clean, intuitive PyQt5 interface with real-time histogram and tone curve visualization.
-- **Image Navigation:** Quickly move between images in a folder.
-- **Save Processed Images:** Export high-quality JPEGs with a single click.
+## Using it
 
-## Getting Started
+1. Open a folder of scans, or drop files or a folder onto the page.
+2. Each frame is converted automatically. Use **Convert** to:
+   - choose the film type
+   - sample the film base (`B`) or a neutral (`N`)
+   - pick Frame, Roll or Blend balance
+3. Refine with **Adjust**, **Colour** and **Curves**, and crop with **Crop** (`C`).
+4. Select frames with Shift/⌘ in the filmstrip to **Sync** settings or apply **Presets**.
+5. **Export** (`E`):
+   - Chromium browsers save into an `onl_positives/` folder you pick.
+   - Other browsers download a file, or a ZIP for several frames.
 
-### 1. Prerequisites
+Hold `\` to see the original negative. `←`/`→` move between frames.
 
-- **Python 3.7+**
-- **pip** (Python package manager)
-- **Recommended:** Use a virtual environment (e.g., `venv` or `conda`).
-
-### 2. Installation
-
-Clone the repository and install dependencies:
-
-```bash
-git clone https://github.com/parasharmohapatra/orpheusnegativelab.git
-cd orpheusnegativelab
-pip install -r requirements.txt
-```
-
-### 3. Running Orpheus Negative Lab
-
-Run the application with:
+## Development
 
 ```bash
-python orpheus.py
+cd web
+npm install
+npm run dev        # http://localhost:5173
+npm test           # engine tests: synthetic film round trip, roll consistency, encoders
+npm run build      # static site in web/dist (deployed to GitHub Pages by .github/workflows/pages.yml)
 ```
 
-### 4. Usage
+### Layout
 
-1. **Open a Directory:** Click "Open Directory" and select a folder containing your RAW film negatives.
-2. **Navigate Images:** Use "Previous" and "Next" to browse through your images.
-3. **Adjust Tone Curves:** Use the RGB sliders to fine-tune each channel's tone curve. Adjust exposure and contrast as needed. Changes are reflected in real time.
-4. **Visualize:** View histograms and tone curves for each channel to guide your edits.
-5. **Transform:** Rotate or flip images for correct orientation.
-6. **Save:** Save the processed image as a JPEG in a "positives" subdirectory.
-7. **Batch Process:** Process all images in the directory using your current settings.
-8. **Reset:** Return all sliders and transformations to default values with the reset option.
+| Path | Contents |
+|---|---|
+| `web/src/engine/` | Framework-free conversion engine |
+| `web/src/engine/pipeline/` | Recipe schema, film-base and frame analysis, roll statistics, parameter building, and `reference.ts` (the CPU implementation that is the source of truth) |
+| `web/src/engine/gpu/` | WebGL2 renderer; `convert.frag.glsl` mirrors `reference.ts` line for line |
+| `web/src/engine/decode/`, `encode/`, `export/`, `workers/` | Decoders, ICC/TIFF/PNG/JPEG writers, tiled full-resolution export, worker pool |
+| `web/src/app/` | React UI, zustand store, IndexedDB persistence, theme |
+| `web/wasm/libraw/` | Reproducible LibRaw → WebAssembly build. The prebuilt module is committed in `web/public/wasm/`. |
+| `legacy/` | The original PyQt desktop app, kept for reference |
 
-### 5. How It Works
+For local testing with your own scans, the dev server can open files from disk:
 
-- The app inverts the RAW negative and analyzes each color channel's histogram.
-- Triangle-based tone curves are generated for each channel, allowing precise highlight, shadow, and midtone control.
-- Exposure and contrast adjustments are applied in real time.
-- All edits are non-destructive; originals are never overwritten.
+```bash
+ONL_DEV_FS=/path/to/scans npm run dev
+# then open http://localhost:5173/?devload=/@fs/path/to/scans/a.CR2,/@fs/path/to/scans/b.CR2
+```
 
-![Histogram](data/histogram.png)
+This only works in development builds.
 
-## Troubleshooting
+### How the conversion works
 
-- If you encounter issues with RAW file support, ensure you have `rawpy` and `opencv-python` installed.
-- For UI issues, check your PyQt5 installation.
-- For best results, use high-quality RAW scans of your negatives.
+For each pixel with linear camera signal `I` and film base `B`:
+
+1. Compute density above base: `D = −log10(I / B)`.
+2. Normalize per channel between the 0.3% and 99.7% density percentiles inside the frame. Pixels brighter than the base and clipped pixels are excluded.
+3. Apply a midtone bend fitted on near-grey pixels. It only adjusts midtones; shadows and highlights stay where step 2 put them.
+4. Convert to scene light: `E = 0.18 · 2^(2.5 + R·(n − 1))`, where `R` is the scene range in stops.
+5. Apply the camera matrix, exposure and white balance, giving linear Rec.2020.
+6. Apply the paper sigmoid in log space, then colour adjustments in OkLCh.
+7. Convert to the output colour space, encode, and apply curves.
+
+The tests simulate a masked, crossed-over negative of a ColorChecker. The round trip recovers it with a mean ΔE2000 under 2, and grey stays neutral across a ±2 EV roll.
 
 ## License
 
-This project is provided as-is for personal and educational use. See LICENSE for details.
-
----
-
-For questions, feature requests, or contributions, please open an issue or pull request on GitHub.
+MIT, see `LICENSE`. LibRaw is used under the LGPL 2.1 / CDDL 1.0 (see `web/wasm/libraw/README.md`).
