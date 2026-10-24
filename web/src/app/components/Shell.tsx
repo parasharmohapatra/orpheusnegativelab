@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ACCEPTED_EXTENSIONS } from '../../engine/decode/index';
 import { openFiles } from '../store/frames';
 import { useCurrentFrame, useStore, type Surround, type Tool } from '../store/rollStore';
+import { BulkBar } from './Library';
 import { IconAdjust, IconColor, IconConvert, IconCrop, IconCurves, IconHelp, IconPresets, IconSettings } from './icons';
 
 const ACCEPT = ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',');
@@ -37,14 +38,25 @@ export function Header() {
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const pickers = useFilePickers();
+  const view = useStore((s) => s.view);
   return (
     <header className="header">
       <div className="brand">
         <h1 className="wordmark">
           Orpheus<small>Negative Lab</small>
         </h1>
-        {frame && <span className="filename">{frame.name}</span>}
+        {frame && view === 'edit' && <span className="filename">{frame.name}</span>}
       </div>
+      {frames.length > 0 && (
+        <div className="seg view-toggle" role="radiogroup" aria-label="View">
+          <button type="button" role="radio" aria-checked={view === 'library'} className={view === 'library' ? 'on' : ''} onClick={() => set('view', 'library')} title="Grid (G)">
+            Library
+          </button>
+          <button type="button" role="radio" aria-checked={view === 'edit'} className={view === 'edit' ? 'on' : ''} onClick={() => set('view', 'edit')} title="Edit (D)">
+            Develop
+          </button>
+        </div>
+      )}
       <div className="header-actions">
         <button type="button" className="btn" onClick={pickers.openFolder} title="Open a folder of scans">
           Open roll
@@ -83,7 +95,7 @@ const TOOLS: { id: Tool; label: string; key: string; icon: () => JSX.Element }[]
   { id: 'color', label: 'Colour', key: '3', icon: IconColor },
   { id: 'curves', label: 'Curves', key: '4', icon: IconCurves },
   { id: 'crop', label: 'Crop', key: 'C', icon: IconCrop },
-  { id: 'presets', label: 'Presets', key: 'P', icon: IconPresets },
+  { id: 'presets', label: 'Looks', key: 'P', icon: IconPresets },
 ];
 
 export function ToolRail() {
@@ -167,10 +179,12 @@ function ShortcutHelp({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
     ['← / →', 'Previous / next frame'],
     ['1 2 3 4', 'Convert, Adjust, Colour, Curves'],
-    ['C / P', 'Crop / Presets'],
+    ['C / P', 'Crop / Film looks'],
     ['\\ (hold)', 'Show the negative'],
     ['⌘Z / ⇧⌘Z', 'Undo / redo'],
-    ['⌘A', 'Select every frame'],
+    ['G / D', 'Library grid / develop'],
+    ['⌘A / Esc', 'Select all / clear selection'],
+    ['Space', 'Add or remove frame from selection'],
     ['B / N', 'Sample base / pick neutral'],
     ['E', 'Export'],
     ['Esc', 'Cancel picker or dialog'],
@@ -192,38 +206,54 @@ export function Filmstrip() {
   const currentId = useStore((s) => s.currentId);
   const selected = useStore((s) => s.selected);
   const toggle = useStore((s) => s.toggleSelect);
-  const roll = useStore((s) => s.roll);
+  const open = useStore((s) => s.stripOpen);
+  const set = useStore((s) => s.set);
   const stripRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = stripRef.current?.querySelector('.thumb.current') as HTMLElement | null;
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [currentId]);
+  }, [currentId, open]);
 
+  const idx = frames.findIndex((f) => f.id === currentId) + 1;
   const ready = frames.filter((f) => f.status === 'ready').length;
   return (
-    <footer className="filmstrip">
-      <div className="strip-meta">
-        <b>Roll</b>
-        <span>
-          {frames.length} frames{ready < frames.length ? ` · ${ready} ready` : ''}
-        </span>
-        {roll && <span>{selected.length > 1 ? `${selected.length} selected` : 'Shift/⌘ to select'}</span>}
+    <footer className={`filmstrip${open ? '' : ' closed'}`}>
+      <div className="strip-bar">
+        <button type="button" className="strip-toggle" onClick={() => set('stripOpen', !open)} aria-expanded={open} title={open ? 'Hide filmstrip' : 'Show filmstrip'}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style={{ transform: open ? 'none' : 'rotate(180deg)' }}>
+            <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+          <span>
+            Frame {idx} of {frames.length}
+            {ready < frames.length ? ` · ${ready} developed` : ''}
+          </span>
+        </button>
+        {selected.length > 1 ? <BulkBar compact /> : <span className="hint strip-hint">⇧ or ⌘ click to select several frames, then edit them together</span>}
+        <button type="button" className="btn small" onClick={() => set('view', 'library')} title="Grid view (G)">
+          Grid
+        </button>
       </div>
-      <div className="strip" ref={stripRef}>
-        {frames.map((f, i) => (
-          <button
-            key={f.id}
-            type="button"
-            className={['thumb', f.id === currentId ? 'current' : '', selected.includes(f.id) ? 'selected' : '', f.status === 'error' ? 'error' : ''].join(' ')}
-            title={f.error ? `${f.name}: ${f.error}` : f.name}
-            onClick={(e) => toggle(f.id, e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : 'single')}
-          >
-            {f.thumb ? <img src={f.thumb} alt={f.name} draggable={false} /> : f.status === 'error' ? <span className="status">Can't read</span> : <span className="spinner" />}
-            <span className="num">{i + 1}</span>
-          </button>
-        ))}
-      </div>
+      {open && (
+        <div className="strip" ref={stripRef}>
+          {frames.map((f, i) => {
+            const sel = selected.includes(f.id);
+            return (
+              <button
+                key={f.id}
+                type="button"
+                className={['thumb', f.id === currentId ? 'current' : '', sel ? 'selected' : '', f.status === 'error' ? 'error' : ''].join(' ')}
+                title={f.error ? `${f.name}: ${f.error}` : f.name}
+                onClick={(e) => toggle(f.id, e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : 'single')}
+              >
+                {f.thumb ? <img src={f.thumb} alt={f.name} draggable={false} /> : f.status === 'error' ? <span className="status">Can't read</span> : <span className="spinner" />}
+                <span className="num">{i + 1}</span>
+                {selected.length > 1 && <span className={`tick${sel ? ' on' : ''}`} aria-hidden="true" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </footer>
   );
 }

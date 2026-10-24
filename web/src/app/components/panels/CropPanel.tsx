@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { applyAffine, clampCrop, inscribedScale, invertAffine, orientedSize, outputToSource, withOrientation } from '../../../engine/geometry/transform';
+import { inscribedScale, orientedSize, withOrientation } from '../../../engine/geometry/transform';
+import { autoFrameCrop } from '../../store/frames';
 import { useCurrentFrame, useStore } from '../../store/rollStore';
 import { Check, Section, Slider } from '../controls';
 import { IconFlip, IconRotate } from '../icons';
@@ -40,7 +41,7 @@ export function CropPanel() {
         w = (h * r * oh) / ow;
       }
       d.geometry.crop = { x: Math.max(0, cx - w / 2), y: Math.max(0, cy - h / 2), w, h };
-    });
+    }, true, true);
   };
 
   const straighten = (deg: number, commit: boolean) =>
@@ -62,7 +63,7 @@ export function CropPanel() {
         x: Math.min(lo + s - w, Math.max(lo, cx - w / 2)),
         y: Math.min(lo + s - h, Math.max(lo, cy - h / 2)),
       };
-    }, commit);
+    }, commit, true);
 
   return (
     <>
@@ -96,18 +97,12 @@ export function CropPanel() {
             type="button"
             className="btn small"
             onClick={() => {
-              const f = frame.stats?.frame;
-              if (!f) return;
-              // Map the detected image area (source coords) into the oriented crop space.
-              const full = withOrientation({ ...g, straighten: 0, crop: { x: 0, y: 0, w: 1, h: 1 } }, frame.meta!.orientation);
-              const inv = invertAffine(outputToSource(frame.analysis!.width, frame.analysis!.height, full));
-              const pts = [[f.x0, f.y0], [f.x1, f.y0], [f.x0, f.y1], [f.x1, f.y1]].map(([u, v]) => applyAffine(inv, u, v));
-              const xs = pts.map((p) => p[0]);
-              const ys = pts.map((p) => p[1]);
+              const crop = autoFrameCrop(frame);
+              if (!crop) return;
               edit((d) => {
                 d.geometry.straighten = 0;
-                d.geometry.crop = clampCrop({ x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
-              });
+                d.geometry.crop = crop;
+              }, true, true);
             }}
           >
             Auto frame
@@ -119,14 +114,14 @@ export function CropPanel() {
               edit((d) => {
                 d.geometry.crop = { x: 0, y: 0, w: 1, h: 1 };
                 d.geometry.straighten = 0;
-              })
+              }, true, true)
             }
           >
             Reset crop
           </button>
         </div>
         <Check label="Ignore film border when measuring" checked={g.autoFrame} onChange={(v) => edit((d) => void (d.geometry.autoFrame = v))} />
-        <p className="hint">Drag the corners to crop. Colour is measured inside the crop, so cropping out the rebate and holder improves the conversion.</p>
+        <p className="hint">Drag the corners to crop. Cropping only frames the picture; colour is always measured on the whole frame, with the film holder and rebate left out automatically.</p>
       </Section>
     </>
   );

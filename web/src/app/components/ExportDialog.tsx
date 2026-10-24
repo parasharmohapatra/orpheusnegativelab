@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { OUTPUT_SPACES, type OutputSpaceId } from '../../engine/color/spaces';
 import type { ExportFormat, ExportSettings } from '../../engine/export/exportFrame';
 import { saveSetting } from '../persistence/db';
@@ -17,7 +17,10 @@ export function ExportDialog() {
   const stored = useStore((s) => s.exportSettings);
   const set = useStore((s) => s.set);
   const [s, setS] = useState<ExportSettings>(stored);
-  const [scope, setScope] = useState<Scope>(selected.length > 1 ? 'selected' : 'current');
+  const [scope, setScope] = useState<Scope>('current');
+  useEffect(() => {
+    if (open) setScope(selected.length > 1 ? 'selected' : 'current');
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!open) return null;
 
   const ids = scope === 'all' ? frames.map((f) => f.id) : scope === 'selected' ? selected : currentId ? [currentId] : [];

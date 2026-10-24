@@ -52,7 +52,7 @@ export function CropOverlay({ rect }: { rect: Rect }) {
     }
     edit((r) => {
       r.geometry.crop = clampCrop(next);
-    }, false);
+    }, false, true);
   };
 
   const end = () => {

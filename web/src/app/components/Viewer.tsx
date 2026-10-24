@@ -210,7 +210,7 @@ export function Viewer() {
         const off = neutralOffsetFor(params, rgb);
         edit((r) => {
           r.convert.neutralOffset = off;
-        });
+        }, true, true);
         useStore.getState().notify('Neutral point set.');
       }
       set('picker', null);

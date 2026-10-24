@@ -4,6 +4,7 @@ import { REC709_TO_WORKING, workingToOutput, OUTPUT_SPACES, type OutputSpaceId }
 import type { TransferId } from '../color/transfer';
 import type { FrameStats } from './analysis';
 import { bakeCurves, isIdentityCurve } from './curves';
+import { findLook } from './looks';
 import { rangeLambdas, type Recipe } from './recipe';
 import { blendEndpoints, type RollStats } from './roll';
 
@@ -159,11 +160,21 @@ export function buildParams(
     }
   }
 
-  const t = recipe.tone;
+  // The film look adds offsets on top of the user's settings, scaled by its strength.
+  const look = findLook(recipe.look.id);
+  const ls = look ? recipe.look.strength : 0;
+  const clamp1 = (v: number) => Math.max(-1.5, Math.min(1.5, v));
+  const t = { ...recipe.tone };
+  if (look?.tone) for (const [k, v] of Object.entries(look.tone)) t[k as keyof typeof look.tone] = clamp1(t[k as keyof typeof look.tone] + (v ?? 0) * ls);
+  const c = { ...recipe.color, hslHue: [...recipe.color.hslHue], hslSat: [...recipe.color.hslSat], hslLum: [...recipe.color.hslLum] };
+  if (look?.color) {
+    for (const k of ['temp', 'tint', 'saturation', 'vibrance'] as const) c[k] = clamp1(c[k] + (look.color[k] ?? 0) * ls);
+    for (const k of ['hslHue', 'hslSat', 'hslLum'] as const) look.color[k]?.forEach((v, i) => (c[k][i] = clamp1(c[k][i] + v * ls)));
+  }
   const exposureGain = Math.pow(2, t.exposure);
   const camToWork = mul(
     REC709_TO_WORKING,
-    mul(whiteBalance709(recipe.color.temp, recipe.color.tint), mul(meta.toRec709, diag([exposureGain, exposureGain, exposureGain]))),
+    mul(whiteBalance709(c.temp, c.tint), mul(meta.toRec709, diag([exposureGain, exposureGain, exposureGain]))),
   );
 
   const printMode = t.printCurve === 'linear' ? 0 : 1;
@@ -175,10 +186,10 @@ export function buildParams(
   const paperSLo = printMode ? sig(xb) : 0;
   const paperInvRange = printMode ? 1 / (sig(xw) - paperSLo) : 1;
 
-  const c = recipe.color;
   const hslActive = [...c.hslHue, ...c.hslSat, ...c.hslLum].some((v) => v !== 0);
   const cv = recipe.curves;
-  const curvesIdentity = [cv.rgb, cv.r, cv.g, cv.b].every(isIdentityCurve);
+  const lookCurves = look?.curves && ls > 0 ? look.curves : null;
+  const curvesIdentity = !lookCurves && [cv.rgb, cv.r, cv.g, cv.b].every(isIdentityCurve);
 
   return {
     filmType,
@@ -207,6 +218,6 @@ export function buildParams(
     hslActive,
     workToOut: workingToOutput(output),
     outTransfer: OUTPUT_SPACES[output].transfer,
-    curves: curvesIdentity ? null : bakeCurves(cv),
+    curves: curvesIdentity ? null : bakeCurves(cv, lookCurves, ls),
   };
 }

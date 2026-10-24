@@ -58,8 +58,17 @@ interface State {
   exportSettings: ExportSettings;
   batch: BatchState | null;
   toast: { id: number; text: string; kind: 'info' | 'error' } | null;
-  /** Snapshot taken when an uncommitted edit (slider drag) starts. */
-  editSnapshot: Recipe | null;
+  /** Per-frame snapshots taken when an uncommitted edit (slider drag) starts. */
+  editSnapshots: Record<string, Recipe> | null;
+  /** Frames touched by the last bulk edit, so undo/redo treat it as one step. */
+  lastGroup: string[] | null;
+  redoGroup: string[] | null;
+  view: 'edit' | 'library';
+  /** Where a shift-click range starts. */
+  anchorId: string | null;
+  /** With several frames selected, edits apply to all of them. */
+  autoSync: boolean;
+  stripOpen: boolean;
 }
 
 interface Actions {
@@ -70,8 +79,15 @@ interface Actions {
   selectAll(): void;
   patchFrame(id: string, patch: Partial<FrameEntry>): void;
   removeFrame(id: string): void;
-  /** Edit the current frame's recipe. `commit` pushes an undo step (use false while dragging). */
-  edit(fn: (r: Recipe) => void, commit?: boolean): void;
+  /**
+   * Edit the current frame's recipe (and the rest of the selection when auto-sync is on).
+   * `commit` pushes an undo step (use false while dragging); `local` keeps per-frame edits
+   * such as crop or a neutral pick on the current frame only.
+   */
+  edit(fn: (r: Recipe) => void, commit?: boolean, local?: boolean): void;
+  /** One undoable edit applied to the given frames (bulk actions). */
+  editFrames(ids: string[], fn: (r: Recipe) => void): void;
+  open(id: string): void;
   commit(): void;
   undo(): void;
   redo(): void;
@@ -102,7 +118,13 @@ export const useStore = create<State & Actions>((set, get) => ({
   exportSettings: { format: 'jpeg', bits: 8, quality: 0.92, space: 'srgb', longEdge: null, border: 0 },
   batch: null,
   toast: null,
-  editSnapshot: null,
+  editSnapshots: null,
+  lastGroup: null,
+  redoGroup: null,
+  view: 'edit',
+  anchorId: null,
+  autoSync: true,
+  stripOpen: true,
 
   addFrames(entries) {
     set((s) => {
@@ -115,7 +137,13 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   setCurrent(id) {
     get().commit();
-    set({ currentId: id, selected: [id], zoom: 'fit', pan: [0, 0], picker: null });
+    set({ currentId: id, selected: [id], anchorId: id, zoom: 'fit', pan: [0, 0], picker: null });
+  },
+
+  open(id) {
+    get().commit();
+    const keep = get().selected.includes(id) ? get().selected : [id];
+    set({ currentId: id, selected: keep, view: 'edit', zoom: 'fit', pan: [0, 0], picker: null });
   },
 
   step(delta) {
@@ -127,16 +155,28 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   toggleSelect(id, mode) {
     const { frames, selected, currentId } = get();
-    if (mode === 'single') return get().setCurrent(id);
+    if (mode === 'single') {
+      // Clicking inside a multi-selection only changes which frame is current, so a
+      // double-click to open (or a stray click) doesn't throw the selection away.
+      if (selected.length > 1 && selected.includes(id)) {
+        get().commit();
+        return set({ currentId: id, anchorId: id });
+      }
+      return get().setCurrent(id);
+    }
     if (mode === 'toggle') {
       const has = selected.includes(id);
       const next = has ? selected.filter((x) => x !== id) : [...selected, id];
-      return set({ selected: next.length ? next : [id] });
+      if (!next.length) return;
+      // The current frame always stays in the selection.
+      const cur = next.includes(currentId ?? '') ? currentId : next[next.length - 1];
+      return set({ selected: next, currentId: cur, anchorId: id });
     }
-    const a = frames.findIndex((f) => f.id === currentId);
+    const a = frames.findIndex((f) => f.id === (get().anchorId ?? currentId));
     const b = frames.findIndex((f) => f.id === id);
     const [lo, hi] = a < b ? [a, b] : [b, a];
-    set({ selected: frames.slice(lo, hi + 1).map((f) => f.id) });
+    get().commit();
+    set({ selected: frames.slice(lo, hi + 1).map((f) => f.id), currentId: id });
   },
 
   selectAll() {
@@ -155,27 +195,47 @@ export const useStore = create<State & Actions>((set, get) => ({
     });
   },
 
-  edit(fn, commit = true) {
-    const { currentId, frames, editSnapshot } = get();
-    const f = frames.find((x) => x.id === currentId);
-    if (!f) return;
-    const next = produce(f.recipe, fn);
-    if (next === f.recipe) return;
-    set((s) => ({
-      editSnapshot: editSnapshot ?? f.recipe,
-      frames: s.frames.map((x) => (x.id === f.id ? { ...x, recipe: next } : x)),
-    }));
+  edit(fn, commit = true, local = false) {
+    const { currentId, frames, editSnapshots, autoSync, selected } = get();
+    if (!currentId) return;
+    const ids = !local && autoSync && selected.length > 1 && selected.includes(currentId) ? selected : [currentId];
+    const snaps = { ...(editSnapshots ?? {}) };
+    let changed = false;
+    const nextFrames = frames.map((x) => {
+      if (!ids.includes(x.id)) return x;
+      const next = produce(x.recipe, fn);
+      if (next === x.recipe) return x;
+      changed = true;
+      if (!snaps[x.id]) snaps[x.id] = x.recipe;
+      return { ...x, recipe: next };
+    });
+    if (!changed) return;
+    set({ editSnapshots: snaps, frames: nextFrames });
     if (commit) get().commit();
   },
 
-  commit() {
-    const { editSnapshot, currentId } = get();
-    if (!editSnapshot) return;
+  editFrames(ids, fn) {
+    get().commit();
     set((s) => ({
-      editSnapshot: null,
+      lastGroup: ids.length > 1 ? ids : null,
+      frames: s.frames.map((x) => {
+        if (!ids.includes(x.id)) return x;
+        const next = produce(x.recipe, fn);
+        return next === x.recipe ? x : { ...x, recipe: next, history: [...x.history.slice(-MAX_HISTORY + 1), x.recipe], future: [] };
+      }),
+    }));
+  },
+
+  commit() {
+    const { editSnapshots } = get();
+    if (!editSnapshots) return;
+    const ids = Object.keys(editSnapshots);
+    set((s) => ({
+      editSnapshots: null,
+      lastGroup: ids.length > 1 ? ids : null,
       frames: s.frames.map((x) =>
-        x.id === currentId && x.recipe !== editSnapshot
-          ? { ...x, history: [...x.history.slice(-MAX_HISTORY + 1), editSnapshot], future: [] }
+        editSnapshots[x.id] && x.recipe !== editSnapshots[x.id]
+          ? { ...x, history: [...x.history.slice(-MAX_HISTORY + 1), editSnapshots[x.id]], future: [] }
           : x,
       ),
     }));
@@ -183,9 +243,14 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   undo() {
     get().commit();
+    const { lastGroup, currentId } = get();
+    // A bulk edit undoes as one step across every frame it touched.
+    const ids = lastGroup && currentId && lastGroup.includes(currentId) ? lastGroup : [currentId];
     set((s) => ({
+      redoGroup: ids.length > 1 ? (ids as string[]) : null,
+      lastGroup: null,
       frames: s.frames.map((x) => {
-        if (x.id !== s.currentId || !x.history.length) return x;
+        if (!ids.includes(x.id) || !x.history.length) return x;
         const prev = x.history[x.history.length - 1];
         return { ...x, recipe: prev, history: x.history.slice(0, -1), future: [x.recipe, ...x.future] };
       }),
@@ -193,9 +258,13 @@ export const useStore = create<State & Actions>((set, get) => ({
   },
 
   redo() {
+    const { redoGroup, currentId } = get();
+    const ids = redoGroup && currentId && redoGroup.includes(currentId) ? redoGroup : [currentId];
     set((s) => ({
+      lastGroup: ids.length > 1 ? (ids as string[]) : null,
+      redoGroup: null,
       frames: s.frames.map((x) => {
-        if (x.id !== s.currentId || !x.future.length) return x;
+        if (!ids.includes(x.id) || !x.future.length) return x;
         const [next, ...rest] = x.future;
         return { ...x, recipe: next, history: [...x.history, x.recipe], future: rest };
       }),
@@ -205,6 +274,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   applyToFrames(ids, part) {
     get().commit();
     set((s) => ({
+      lastGroup: ids.length > 1 ? ids : null,
       frames: s.frames.map((x) =>
         ids.includes(x.id) ? { ...x, recipe: applyPartial(x.recipe, part), history: [...x.history.slice(-MAX_HISTORY + 1), x.recipe], future: [] } : x,
       ),

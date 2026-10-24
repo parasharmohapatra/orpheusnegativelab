@@ -11,7 +11,13 @@ Convert colour negative, black-and-white and slide film scans into finished posi
   - Leftover midtone casts are measured on near-neutral pixels only, so colourful subjects aren't neutralized.
 - **Roll-aware.** The film base is shared across the roll. Colour balance runs per frame (like NLP's auto), per roll (film response shared, exposure kept per frame), or a blend of the two.
 - **Print look.** Paper-style curves (soft, standard, dense, linear), exposure, contrast, highlights/shadows/whites/blacks, white balance, vibrance/saturation, an 8-band colour mixer (OkLCh), and RGB and per-channel curves.
-- **Crop, rotate and straighten**, with auto-frame from the detected film border.
+- **Film looks** inspired by Portra 160/400/800, Ektar, Gold, UltraMax, ColorPlus, Pro 400H, Superia, C200, Velvia, Provia, CineStill 800T/50D/400D, Vision3 250D/500T, plus B&W stocks (HP5, Tri-X, Delta, Pan F, T-Max, Fomapan).
+  - Each look has a strength slider and a live preview on your own frame.
+  - Looks layer on top of your adjustments rather than replacing them.
+- **Library grid and bulk editing.** Select frames (click, ⇧ for a range, ⌘ to add), then use the selection bar to set the film type, balance or look, rotate, reset, sync or export them all at once.
+  - With **Edit all** on, every slider in Develop adjusts the whole selection.
+  - Undo reverts a bulk edit across all the frames it touched.
+- **Crop, rotate and straighten**, with auto-frame from the detected film border. Cropping never changes the colour: density is always measured on the whole frame, with the holder and rebate excluded automatically.
 - **Batch export** at full resolution: JPEG, or 8/16-bit TIFF and PNG, in sRGB, Display P3, Adobe RGB or ProPhoto, with an embedded ICC profile and an optional white border. Rendering is tiled on the GPU, so 50+ MP files work.
 - **Remembers your edits** per file (IndexedDB), with presets, sync between frames, and undo/redo.
 
@@ -23,7 +29,7 @@ Convert colour negative, black-and-white and slide film scans into finished posi
    - sample the film base (`B`) or a neutral (`N`)
    - pick Frame, Roll or Blend balance
 3. Refine with **Adjust**, **Colour** and **Curves**, and crop with **Crop** (`C`).
-4. Select frames with Shift/⌘ in the filmstrip to **Sync** settings or apply **Presets**.
+4. Press `G` for the **Library** grid. Select frames there, or in the filmstrip, to edit them together: the selection bar has film type, balance, looks, rotate, sync and export. Pick a film look under **Looks** (`P`).
 5. **Export** (`E`):
    - Chromium browsers save into an `onl_positives/` folder you pick.
    - Other browsers download a file, or a ZIP for several frames.

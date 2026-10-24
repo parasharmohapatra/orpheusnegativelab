@@ -1,11 +1,11 @@
 import type { LinearImage, Vec3 } from '../../engine/types';
 import type { OutputSpaceId } from '../../engine/color/spaces';
 import { kindOf, ACCEPTED_EXTENSIONS } from '../../engine/decode/index';
-import { applyAffine, outputSize, outputToSource, withOrientation } from '../../engine/geometry/transform';
-import { analyzeFrame, FULL_RECT, type FrameStats, type Rect } from '../../engine/pipeline/analysis';
+import { applyAffine, clampCrop, invertAffine, outputSize, outputToSource, withOrientation } from '../../engine/geometry/transform';
+import { analyzeFrame, FULL_RECT, type FrameStats } from '../../engine/pipeline/analysis';
 import { buildParams, type RenderParams } from '../../engine/pipeline/params';
 import { balancedDensity, renderCpu, sampleBilinear, toRGBA8 } from '../../engine/pipeline/reference';
-import type { Recipe } from '../../engine/pipeline/recipe';
+import type { CropRect, Recipe } from '../../engine/pipeline/recipe';
 import type { RollStats } from '../../engine/pipeline/roll';
 import { decodeFile } from '../../engine/workers/client';
 import { fingerprint, loadRecipe, requestPersistence, saveRecipe } from '../persistence/db';
@@ -112,26 +112,15 @@ function ingestDecoded(id: string, meta: FrameEntry['meta'], analysis: LinearIma
 
 /** Recipe fields that change what the statistics measure. */
 function statsKeyOf(r: Recipe): string {
-  const g = r.geometry;
-  return JSON.stringify([r.film.baseMode, r.film.baseRgb, r.film.bwMix, r.convert.blackClip, r.convert.whiteClip, g.crop, g.rot90, g.flipH, g.straighten, g.autoFrame]);
-}
-
-/** The user's crop as a rectangle in source coordinates (bounding box). */
-export function cropAreaOf(f: FrameEntry): Rect {
-  const g = f.recipe.geometry;
-  if (g.crop.w >= 0.999 && g.crop.h >= 0.999 && g.straighten === 0) return FULL_RECT;
-  const img = f.analysis!;
-  const m = outputToSource(img.width, img.height, withOrientation(g, f.meta!.orientation));
-  const pts = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => applyAffine(m, u, v));
-  const xs = pts.map((p) => p[0]);
-  const ys = pts.map((p) => p[1]);
-  return { x0: Math.max(0, Math.min(...xs)), y0: Math.max(0, Math.min(...ys)), x1: Math.min(1, Math.max(...xs)), y1: Math.min(1, Math.max(...ys)) };
+  // Crop and rotation are deliberately absent: framing a picture must not change its colour.
+  return JSON.stringify([r.film.baseMode, r.film.baseRgb, r.film.bwMix, r.convert.blackClip, r.convert.whiteClip, r.geometry.autoFrame]);
 }
 
 function computeStats(f: FrameEntry): FrameStats {
   const r = f.recipe;
   return analyzeFrame(f.analysis!, {
-    cropArea: cropAreaOf(f),
+    // Always the whole frame (minus detected holder/rebate), never the crop.
+    cropArea: FULL_RECT,
     autoFrame: r.geometry.autoFrame,
     baseOverride: r.film.baseMode === 'manual' ? r.film.baseRgb : null,
     blackClip: r.convert.blackClip,
@@ -155,9 +144,21 @@ export function paramsFor(f: FrameEntry | null, roll: RollStats | null, space: O
   return buildParams(f.recipe, f.stats, roll, f.meta, space);
 }
 
+/** The detected image area as a crop rectangle in the frame's oriented space. */
+export function autoFrameCrop(f: FrameEntry): CropRect | null {
+  const r = f.stats?.frame;
+  if (!r || !f.analysis || !f.meta) return null;
+  const full = withOrientation({ ...f.recipe.geometry, straighten: 0, crop: { x: 0, y: 0, w: 1, h: 1 } }, f.meta.orientation);
+  const inv = invertAffine(outputToSource(f.analysis.width, f.analysis.height, full));
+  const pts = [[r.x0, r.y0], [r.x1, r.y0], [r.x0, r.y1], [r.x1, r.y1]].map(([u, v]) => applyAffine(inv, u, v));
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return clampCrop({ x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
+}
+
 // ---------- thumbnails ----------
 
-const THUMB = 240;
+const THUMB = 420;
 const thumbQueue = new Set<string>();
 let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -167,26 +168,37 @@ function scheduleThumbs(ids: string[], delay = 250): void {
   thumbTimer = setTimeout(drainThumbs, delay);
 }
 
+/**
+ * Render a small JPEG preview of a frame on the CPU, optionally with a different recipe
+ * (used for film-look previews). Uncropped frames are trimmed to the detected image area
+ * so the rebate and holder don't dominate a small preview.
+ */
+export function renderPreview(f: FrameEntry, roll: RollStats | null, maxPx: number, recipe: Recipe = f.recipe): string | null {
+  const p = paramsFor({ ...f, recipe }, roll, 'srgb');
+  if (!f.analysis || !p) return null;
+  const own = recipe.geometry;
+  const untouched = own.crop.w >= 0.999 && own.crop.h >= 0.999 && own.straighten === 0;
+  const g = withOrientation(untouched ? { ...own, crop: autoFrameCrop(f) ?? own.crop } : own, f.meta!.orientation);
+  const [ow, oh] = outputSize(f.analysis.width, f.analysis.height, g);
+  const s = Math.min(1, maxPx / Math.max(ow, oh));
+  const w = Math.max(1, Math.round(ow * s));
+  const h = Math.max(1, Math.round(oh * s));
+  const rgb = renderCpu(f.analysis, p, outputToSource(f.analysis.width, f.analysis.height, g), w, h);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d')!.putImageData(new ImageData(toRGBA8(rgb, w, h), w, h), 0, 0);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
 function drainThumbs(): void {
   const id = thumbQueue.values().next().value as string | undefined;
   if (!id) return;
   thumbQueue.delete(id);
   const st = useStore.getState();
   const f = st.frames.find((x) => x.id === id);
-  const p = paramsFor(f ?? null, st.roll, 'srgb');
-  if (f?.analysis && p) {
-    const g = withOrientation(f.recipe.geometry, f.meta!.orientation);
-    const [ow, oh] = outputSize(f.analysis.width, f.analysis.height, g);
-    const s = Math.min(1, THUMB / Math.max(ow, oh));
-    const w = Math.max(1, Math.round(ow * s));
-    const h = Math.max(1, Math.round(oh * s));
-    const rgb = renderCpu(f.analysis, p, outputToSource(f.analysis.width, f.analysis.height, g), w, h);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    canvas.getContext('2d')!.putImageData(new ImageData(toRGBA8(rgb, w, h), w, h), 0, 0);
-    st.patchFrame(id, { thumb: canvas.toDataURL('image/jpeg', 0.85) });
-  }
+  const thumb = f ? renderPreview(f, st.roll, THUMB) : null;
+  if (thumb) st.patchFrame(id, { thumb });
   if (thumbQueue.size) thumbTimer = setTimeout(drainThumbs, 0);
 }
 

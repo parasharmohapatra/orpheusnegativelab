@@ -73,6 +73,22 @@ describe('film holder', () => {
   });
 });
 
+describe('dense outliers', () => {
+  it('ignores a small dense cluster (holder leaking into a tilted frame) when measuring highlights', () => {
+    const r = defaultRecipe();
+    const clean = makeNegative(PORTRA_ISH, 1, { patch: 40 });
+    const leaked = makeNegative(PORTRA_ISH, 1, { patch: 40 });
+    const { width: w, height: h, data } = leaked.img;
+    // ~1% of the frame: a wedge of near-opaque holder in one corner, inside the rebate.
+    const opaque = basePixel(PORTRA_ISH).map((b) => b * 0.0015);
+    let n = 0;
+    for (let y = 12; y < h - 12 && n < w * h * 0.01; y++) for (let x = 12; x < 12 + Math.max(0, 40 - (y - 12)); x++) { data.set(opaque, (y * w + x) * 3); n++; }
+    const a = analyze(clean.img, r);
+    const b = analyze(leaked.img, r);
+    for (let c = 0; c < 3; c++) expect(b.lHi[c]).toBeCloseTo(a.lHi[c], 1);
+  });
+});
+
 describe('negative → positive round trip', () => {
   it('recovers scene colour from a masked, crossed-over negative (linear print, endpoints only)', () => {
     const r = defaultRecipe();
@@ -143,5 +159,43 @@ describe('film models', () => {
       expect(Math.abs(o[0] - o[1])).toBeLessThan(1e-3);
       expect(Math.abs(o[2] - o[1])).toBeLessThan(1e-3);
     }
+  });
+});
+
+describe('film looks', () => {
+  const run = (mut: (r: Recipe) => void) => {
+    const r = defaultRecipe();
+    mut(r);
+    return convertScene(r).out;
+  };
+  it('strength 0 is identical to no look', () => {
+    const none = run(() => undefined);
+    const zero = run((r) => (r.look = { id: 'cinestill800t', strength: 0 }));
+    none.forEach((o, i) => o.forEach((v, c) => expect(zero[i][c]).toBeCloseTo(v, 6)));
+  });
+  it('every colour look changes the image and stays within range', async () => {
+    const { FILM_LOOKS } = await import('../../src/engine/pipeline/looks');
+    const none = run(() => undefined);
+    for (const look of FILM_LOOKS.filter((l) => !l.bw)) {
+      const out = run((r) => (r.look = { id: look.id, strength: 1 }));
+      const diff = out.reduce((a, o, i) => a + Math.abs(o[0] - none[i][0]) + Math.abs(o[2] - none[i][2]), 0);
+      expect(diff, look.id).toBeGreaterThan(0.01);
+      out.flat().forEach((v) => {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      });
+    }
+  });
+  it('800T is cooler than Gold 200 on the grey patch', () => {
+    const cool = run((r) => (r.look = { id: 'cinestill800t', strength: 1 }))[NEUTRAL_18];
+    const warm = run((r) => (r.look = { id: 'gold200', strength: 1 }))[NEUTRAL_18];
+    expect(cool[2] - cool[0]).toBeGreaterThan(warm[2] - warm[0]);
+  });
+  it('B&W looks keep B&W film neutral', () => {
+    const out = run((r) => {
+      r.film.type = 'bw';
+      r.look = { id: 'trix', strength: 1 };
+    });
+    for (const o of out) expect(Math.abs(o[0] - o[2])).toBeLessThan(1e-3);
   });
 });

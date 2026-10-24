@@ -68,13 +68,21 @@ function median(xs: number[]): number {
  * part of the negative that isn't bare light. Rows and columns at the edges that are
  * mostly near-base, clipped (sprocket holes / light gaps) or opaque (the holder) are border.
  */
-export function detectBaseAndFrame(img: LinearImage): { base: Vec3; fromBorder: boolean; frame: Rect } {
+export interface FrameDetection {
+  base: Vec3;
+  fromBorder: boolean;
+  frame: Rect;
+  /** Pixels connected to the image edge through holder or bare light (1 = exclude). */
+  borderMask: Uint8Array | null;
+}
+
+export function detectBaseAndFrame(img: LinearImage): FrameDetection {
   const { width: w, height: h, data } = img;
   const unclipped = (i: number) =>
     data[i * 3] < CLIP_LEVEL && data[i * 3 + 1] < CLIP_LEVEL && data[i * 3 + 2] < CLIP_LEVEL;
   const b0: Vec3 = [0, 1, 2].map((c) => percentileChannel(img, c, 99.5, unclipped)) as Vec3;
   if (b0.some((v) => !isFinite(v) || v <= 0)) {
-    return { base: [1, 1, 1], fromBorder: false, frame: { x0: 0.01, y0: 0.01, x1: 0.99, y1: 0.99 } };
+    return { base: [1, 1, 1], fromBorder: false, frame: { x0: 0.01, y0: 0.01, x1: 0.99, y1: 0.99 }, borderMask: null };
   }
 
   // The holder in a camera scan is never truly black (flare lifts it), so "opaque"
@@ -92,6 +100,7 @@ export function detectBaseAndFrame(img: LinearImage): { base: Vec3; fromBorder: 
   // only extend the border a short way in from the edge.
   const cls = new Uint8Array(w * h);
   const near = new Uint8Array(w * h);
+  const clippedPx = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
     const r = data[i * 3];
     const g = data[i * 3 + 1];
@@ -100,7 +109,46 @@ export function detectBaseAndFrame(img: LinearImage): { base: Vec3; fromBorder: 
     const isNear = g >= 0.8 * b0[1] && r >= 0.75 * b0[0] && b >= 0.75 * b0[2] && !clipped;
     const opaque = g < opaqueThr;
     near[i] = isNear ? 1 : 0;
+    clippedPx[i] = clipped ? 1 : 0;
     cls[i] = (clipped || isNear ? 1 : 0) | (opaque ? 2 : 0);
+  }
+
+  // Flood from the edges through holder (opaque) and bare light (clipped). This follows
+  // tilted or irregular holders exactly, which a rectangular inset can't.
+  const borderMask = new Uint8Array(w * h);
+  const passable = (i: number) => (cls[i] & 2) !== 0 || clippedPx[i] === 1;
+  const stack: number[] = [];
+  const seed = (i: number) => {
+    if (!borderMask[i] && passable(i)) {
+      borderMask[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x);
+    seed((h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(y * w);
+    seed(y * w + w - 1);
+  }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % w;
+    if (x > 0) seed(i - 1);
+    if (x < w - 1) seed(i + 1);
+    if (i >= w) seed(i - w);
+    if (i < w * (h - 1)) seed(i + w);
+  }
+  // Grow by one pixel to swallow the soft transition at the holder's edge.
+  const grown = borderMask.slice();
+  for (let i = 0; i < w * h; i++) {
+    if (!borderMask[i]) continue;
+    const x = i % w;
+    if (x > 0) grown[i - 1] = 1;
+    if (x < w - 1) grown[i + 1] = 1;
+    if (i >= w) grown[i - w] = 1;
+    if (i < w * (h - 1)) grown[i + w] = 1;
   }
 
   const lineFrac = (count: number, at: (k: number) => number) => (bits: number) => {
@@ -156,9 +204,39 @@ export function detectBaseAndFrame(img: LinearImage): { base: Vec3; fromBorder: 
     }
   }
   if (samples[1].length >= 50) {
-    return { base: samples.map(median) as Vec3, fromBorder: true, frame };
+    return { base: samples.map(median) as Vec3, fromBorder: true, frame, borderMask: grown };
   }
-  return { base: b0, fromBorder: false, frame };
+  return { base: b0, fromBorder: false, frame, borderMask: grown };
+}
+
+/**
+ * L above which pixels belong to a small, separate dense cluster (film holder, frame
+ * edge) rather than the image: the highest cluster that sits above an empty gap of at
+ * least 0.15 D and holds under 4% of pixels. Returns +∞ when there is none.
+ */
+export function denseOutlierCut(hist: Uint32Array, total: number): number {
+  if (total < 1000) return Infinity;
+  const binW = (L_MAX - L_MIN) / hist.length;
+  const gapBins = Math.ceil(0.15 / binW);
+  const empty = Math.max(1, total * 2e-5);
+  let above = 0;
+  let run = 0;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (hist[i] <= empty) {
+      run++;
+      if (run >= gapBins && above > 0) {
+        if (above > total * 0.04) return Infinity;
+        // Everything above the gap is the outlier cluster.
+        return L_MIN + (i + run) * binW;
+      }
+    } else {
+      // Count the pixels of this bin (and any thin ones bridged by a short run) as "above".
+      above += hist[i];
+      run = 0;
+    }
+    if (above > total * 0.04) return Infinity;
+  }
+  return Infinity;
 }
 
 function percentileFromHist(hist: Uint32Array, total: number, pct: number): number {
@@ -185,6 +263,7 @@ export function measureStats(
   base: Vec3,
   area: Rect,
   opts: { blackClip: number; whiteClip: number; bwMix: Vec3 },
+  exclude?: Uint8Array | null,
 ): Omit<FrameStats, 'base' | 'baseFromBorder' | 'frame'> {
   const { width: w, height: h, data } = img;
   const hists = [0, 1, 2, 3].map(() => new Uint32Array(HIST_BINS));
@@ -199,10 +278,13 @@ export function measureStats(
   let total = 0;
   let clipped = 0;
   let considered = 0;
-  // Kept for the near-neutral midtone pass below.
+  // Pass 1: L values of usable pixels, and a green histogram to find stray dense clusters.
   const kept = new Float32Array((x1 - x0) * (y1 - y0) * 3);
+  const gHist = new Uint32Array(HIST_BINS);
+  const binOf = (l: number) => Math.min(HIST_BINS - 1, Math.max(0, Math.floor((l - L_MIN) * binScale)));
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
+      if (exclude && exclude[y * w + x]) continue;
       const i = (y * w + x) * 3;
       const r = data[i];
       const g = data[i + 1];
@@ -212,23 +294,38 @@ export function measureStats(
         clipped++;
         continue;
       }
-      const lr = -Math.log10(Math.max(r, EPS));
       const lg = -Math.log10(Math.max(g, EPS));
-      const lb = -Math.log10(Math.max(b, EPS));
       // Brighter than base by more than 0.02 D in green: not film image.
       if (lg < lBase[1] - 0.02) continue;
-      const lw = mix[0] * lr + mix[1] * lg + mix[2] * lb;
-      const ls = [lr, lg, lb, lw];
-      for (let c = 0; c < 4; c++) {
-        const bin = Math.min(HIST_BINS - 1, Math.max(0, Math.floor((ls[c] - L_MIN) * binScale)));
-        hists[c][bin]++;
-      }
-      kept[total * 3] = lr;
+      kept[total * 3] = -Math.log10(Math.max(r, EPS));
       kept[total * 3 + 1] = lg;
-      kept[total * 3 + 2] = lb;
+      kept[total * 3 + 2] = -Math.log10(Math.max(b, EPS));
+      gHist[binOf(lg)]++;
       total++;
     }
   }
+
+  // Pass 2: histograms without the dense outlier cluster (holder edges that leak into a
+  // tilted frame would otherwise become the "highlight" and darken the whole print).
+  const cut = denseOutlierCut(gHist, total);
+  let used = 0;
+  for (let k = 0; k < total; k++) {
+    const lr = kept[k * 3];
+    const lg = kept[k * 3 + 1];
+    const lb = kept[k * 3 + 2];
+    if (lg > cut) continue;
+    const lw = mix[0] * lr + mix[1] * lg + mix[2] * lb;
+    hists[0][binOf(lr)]++;
+    hists[1][binOf(lg)]++;
+    hists[2][binOf(lb)]++;
+    hists[3][binOf(lw)]++;
+    // Compact in place so the midtone pass sees the same pixels.
+    kept[used * 3] = lr;
+    kept[used * 3 + 1] = lg;
+    kept[used * 3 + 2] = lb;
+    used++;
+  }
+  total = used;
   const lo = (c: number) => (total ? percentileFromHist(hists[c], total, opts.blackClip) : lBase[Math.min(c, 2)]);
   const hi = (c: number) => (total ? percentileFromHist(hists[c], total, 100 - opts.whiteClip) : lBase[Math.min(c, 2)] + 1.5);
   const md = (c: number) => (total ? percentileFromHist(hists[c], total, 50) : lBase[Math.min(c, 2)] + 0.75);
@@ -299,6 +396,6 @@ export function analyzeFrame(img: LinearImage, o: AnalyzeOptions): FrameStats {
   const det = detectBaseAndFrame(img);
   const base = o.baseOverride ?? det.base;
   const area = o.autoFrame ? intersectRect(o.cropArea, det.frame) : o.cropArea;
-  const s = measureStats(img, base, area, o);
+  const s = measureStats(img, base, area, o, o.autoFrame ? det.borderMask : null);
   return { base: det.base, baseFromBorder: det.fromBorder, frame: det.frame, ...s };
 }

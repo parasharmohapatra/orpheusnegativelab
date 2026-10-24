@@ -83,6 +83,12 @@ export interface Recipe {
     g: CurvePoint[];
     b: CurvePoint[];
   };
+  /** Film look layered on top of the adjustments above (see looks.ts). */
+  look: {
+    id: string | null;
+    /** 0..1.5; 1 = as designed. */
+    strength: number;
+  };
   geometry: {
     rot90: 0 | 1 | 2 | 3;
     flipH: boolean;
@@ -137,6 +143,7 @@ export function defaultRecipe(): Recipe {
       hslLum: new Array(8).fill(0),
     },
     curves: { rgb: [...LINE], r: [...LINE], g: [...LINE], b: [...LINE] },
+    look: { id: null, strength: 1 },
     geometry: {
       rot90: 0,
       flipH: false,
@@ -161,6 +168,7 @@ export const RECIPE_SECTIONS: { key: RecipeSection; label: string }[] = [
   { key: 'tone', label: 'Tone' },
   { key: 'color', label: 'Colour' },
   { key: 'curves', label: 'Curves' },
+  { key: 'look', label: 'Film look' },
   { key: 'geometry', label: 'Crop & rotate' },
 ];
 

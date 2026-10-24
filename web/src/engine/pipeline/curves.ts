@@ -75,13 +75,28 @@ export function isIdentityCurve(points: CurvePoint[]): boolean {
   return points.every((p) => Math.abs(p.x - p.y) < 1e-4);
 }
 
-/** Bake per-channel curve then master curve into three LUTs, packed R,G,B consecutively. */
-export function bakeCurves(c: { rgb: CurvePoint[]; r: CurvePoint[]; g: CurvePoint[]; b: CurvePoint[] }): Float32Array {
+type CurveSet = { rgb: CurvePoint[]; r: CurvePoint[]; g: CurvePoint[]; b: CurvePoint[] };
+
+/**
+ * Bake into three LUTs (R, G, B packed consecutively). Order per channel: the film look's
+ * channel then master curve (blended toward identity by `lookStrength`), then the user's
+ * channel then master curve on top.
+ */
+export function bakeCurves(c: CurveSet, look?: Partial<CurveSet> | null, lookStrength = 1): Float32Array {
   const master = curveToLut(c.rgb);
+  const lookMaster = look?.rgb ? curveToLut(look.rgb) : null;
   const out = new Float32Array(LUT_SIZE * 3);
-  [c.r, c.g, c.b].forEach((pts, ch) => {
-    const lut = curveToLut(pts);
-    for (let i = 0; i < LUT_SIZE; i++) out[ch * LUT_SIZE + i] = sampleLut(master, lut[i]);
+  (['r', 'g', 'b'] as const).forEach((k, ch) => {
+    const lut = curveToLut(c[k]);
+    const lookCh = look?.[k] ? curveToLut(look[k]!) : null;
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const x = i / (LUT_SIZE - 1);
+      let v = x;
+      if (lookCh) v = sampleLut(lookCh, v);
+      if (lookMaster) v = sampleLut(lookMaster, v);
+      v = x + (v - x) * lookStrength;
+      out[ch * LUT_SIZE + i] = sampleLut(master, sampleLut(lut, v));
+    }
   });
   return out;
 }

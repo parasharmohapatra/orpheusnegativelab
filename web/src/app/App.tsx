@@ -8,6 +8,7 @@ import { Panel } from './components/Panel';
 import { EmptyState, Filmstrip, Header, ToolRail } from './components/Shell';
 import { SyncDialog } from './components/SyncDialog';
 import { Viewer } from './components/Viewer';
+import { Library } from './components/Library';
 
 /** Collect files from a drop, descending into folders. */
 async function filesFromDrop(dt: DataTransfer): Promise<File[]> {
@@ -49,12 +50,45 @@ function useShortcuts() {
         return;
       }
       if (mod) return;
+      const lib = s.view === 'library';
+      const move = (d: number) => {
+        // Shift extends the selection like a file browser.
+        const i = s.frames.findIndex((f) => f.id === s.currentId);
+        const next = s.frames[Math.min(s.frames.length - 1, Math.max(0, i + d))];
+        if (!next) return;
+        if (e.shiftKey) s.toggleSelect(next.id, 'range');
+        else s.setCurrent(next.id);
+      };
+      const cols = lib ? Math.max(1, Math.round((document.querySelector('.grid')?.clientWidth ?? 1) / ((document.querySelector('.card')?.clientWidth ?? 1) + 14))) : 1;
       switch (e.key) {
         case 'ArrowLeft':
-          s.step(-1);
+          move(-1);
           break;
         case 'ArrowRight':
-          s.step(1);
+          move(1);
+          break;
+        case 'ArrowUp':
+          if (!lib) return;
+          move(-cols);
+          break;
+        case 'ArrowDown':
+          if (!lib) return;
+          move(cols);
+          break;
+        case 'Enter':
+          if (lib && s.currentId) s.open(s.currentId);
+          break;
+        case ' ':
+          if (s.currentId) {
+            const id = s.frames[s.frames.findIndex((f) => f.id === s.currentId)]?.id;
+            if (id) s.toggleSelect(id, 'toggle');
+          }
+          break;
+        case 'g':
+          s.set('view', 'library');
+          break;
+        case 'd':
+          s.set('view', 'edit');
           break;
         case '\\':
           s.set('compare', true);
@@ -89,6 +123,7 @@ function useShortcuts() {
           if (s.currentId) s.set('exportOpen', true);
           break;
         case 'Escape':
+          if (!s.picker && !s.exportOpen && !s.syncOpen && s.currentId) s.set('selected', [s.currentId]);
           s.set('picker', null);
           if (!s.batch?.running) s.set('exportOpen', false);
           s.set('syncOpen', false);
@@ -112,6 +147,7 @@ function useShortcuts() {
 
 export function App() {
   const hasFrames = useStore((s) => s.frames.length > 0);
+  const view = useStore((s) => s.view);
   const toast = useStore((s) => s.toast);
   const [dragging, setDragging] = useState(false);
   useShortcuts();
@@ -138,16 +174,18 @@ export function App() {
       }}
     >
       <Header />
-      {hasFrames ? (
+      {!hasFrames ? (
+        <EmptyState />
+      ) : view === 'library' ? (
+        <Library />
+      ) : (
         <div className="workspace">
           <ToolRail />
           <Viewer />
           <Panel />
         </div>
-      ) : (
-        <EmptyState />
       )}
-      {hasFrames ? <Filmstrip /> : <div />}
+      {hasFrames && view === 'edit' ? <Filmstrip /> : <div />}
       <ExportDialog />
       <SyncDialog />
       {dragging && (
