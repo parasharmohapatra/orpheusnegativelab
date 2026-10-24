@@ -4,6 +4,7 @@ import { IDENTITY, normalizeRows } from '../color/matrices';
 import { srgbDecode } from '../color/transfer';
 import { downsample, downsampleLinear, type FullImage, linearLut } from './fullImage';
 import { decodeTiff, type TiffTransfer } from './tiff';
+import { denoiseChroma } from './denoise';
 
 export const RAW_EXTENSIONS = [
   'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'dng', 'raf', 'orf', 'rw2', 'pef', 'srw', 'x3f', 'erf', 'mos', 'mrw', '3fr', 'fff', 'iiq', 'rwl',
@@ -117,10 +118,22 @@ export async function decodeFull(file: File, opts: DecodeOptions): Promise<FullD
   throw new Error(`Unsupported file type: ${file.name}`);
 }
 
+/**
+ * Chroma noise-reduction radius in pixels of an image decoded at `full` resolution.
+ * Camera scans need it most (the orange mask leaves the blue channel almost empty).
+ */
+export function chromaRadius(kind: SourceMeta['kind'], full: boolean): number {
+  if (kind === 'bitmap') return 1;
+  if (kind === 'raw') return full ? 6 : 3; // half-size pixels are 2×2 sensor pixels
+  return 2;
+}
+
 /** Decode for editing: a proxy for the viewer and a small image for statistics. */
 export async function decodeForEditing(file: File, opts: Omit<DecodeOptions, 'full'> = {}): Promise<DecodedFrame> {
   const { image, meta } = await decodeFull(file, { ...opts, full: false });
   const proxy = downsample(image, PROXY_MAX);
+  const shrink = Math.max(image.width, image.height) / Math.max(proxy.width, proxy.height);
+  denoiseChroma(proxy.data, proxy.width, proxy.height, chromaRadius(meta.kind, false) / shrink);
   const analysis = downsampleLinear(proxy, ANALYSIS_MAX);
   return { meta, proxy, analysis };
 }

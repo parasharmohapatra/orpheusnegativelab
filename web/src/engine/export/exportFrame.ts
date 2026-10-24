@@ -2,7 +2,8 @@ import type { LinearImage, Mat3 } from '../types';
 import { IDENTITY } from '../color/matrices';
 import type { OutputSpaceId } from '../color/spaces';
 import { OUTPUT_SPACES } from '../color/spaces';
-import { decodeFull } from '../decode/index';
+import { chromaRadius, decodeFull } from '../decode/index';
+import { denoiseChroma } from '../decode/denoise';
 import { type FullImage, regionToFloat } from '../decode/fullImage';
 import type { TiffTransfer } from '../decode/tiff';
 import { makeIccProfile } from '../encode/iccProfile';
@@ -58,7 +59,7 @@ export async function exportFrame(job: ExportJob, onProgress?: (f: number) => vo
     outH = Math.max(1, Math.round(outH * s));
   }
   const toSource = outputToSource(image.width, image.height, geo);
-  const rgb = renderTiled(image, job.params, toSource, outW, outH, (f) => onProgress?.(0.3 + f * 0.55));
+  const rgb = renderTiled(image, job.params, toSource, outW, outH, chromaRadius(meta.kind, true), (f) => onProgress?.(0.3 + f * 0.55));
 
   let data = rgb;
   let w = outW;
@@ -102,8 +103,11 @@ function renderTiled(
   toSource: Affine,
   outW: number,
   outH: number,
+  nrRadius: number,
   onProgress: (f: number) => void,
 ): Float32Array {
+  // Extra source margin so chroma NR near tile edges sees real neighbours.
+  const nrMargin = Math.ceil(nrRadius * 2) + 2;
   const out = new Float32Array(outW * outH * 3);
   const r = getRenderer();
   const tiles: { x: number; y: number; w: number; h: number }[] = [];
@@ -117,13 +121,15 @@ function renderTiled(
       [t.x / outW, (t.y + t.h) / outH],
       [(t.x + t.w) / outW, (t.y + t.h) / outH],
     ].map(([u, v]) => applyAffine(toSource, u, v));
-    const sx0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[0])) * img.width) - 2);
-    const sy0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[1])) * img.height) - 2);
-    const sx1 = Math.min(img.width, Math.ceil(Math.max(...corners.map((c) => c[0])) * img.width) + 2);
-    const sy1 = Math.min(img.height, Math.ceil(Math.max(...corners.map((c) => c[1])) * img.height) + 2);
+    const m = 2 + nrMargin;
+    const sx0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[0])) * img.width) - m);
+    const sy0 = Math.max(0, Math.floor(Math.min(...corners.map((c) => c[1])) * img.height) - m);
+    const sx1 = Math.min(img.width, Math.ceil(Math.max(...corners.map((c) => c[0])) * img.width) + m);
+    const sy1 = Math.min(img.height, Math.ceil(Math.max(...corners.map((c) => c[1])) * img.height) + m);
     const rw = Math.max(1, sx1 - sx0);
     const rh = Math.max(1, sy1 - sy0);
     const region: LinearImage = { width: rw, height: rh, data: regionToFloat(img, sx0, sy0, rw, rh) };
+    denoiseChroma(region.data, rw, rh, nrRadius);
     // Full-source uv → region uv.
     const sub: Affine = [img.width / rw, 0, -sx0 / rw, 0, img.height / rh, -sy0 / rh];
     const view: Affine = [t.w / outW, 0, t.x / outW, 0, t.h / outH, t.y / outH];
