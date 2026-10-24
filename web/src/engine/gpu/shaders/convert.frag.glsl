@@ -30,6 +30,9 @@ uniform float u_hslHue[8], u_hslSat[8], u_hslLum[8];
 uniform mat3 u_workToLms, u_m2, u_m2inv, u_lmsToWork, u_workToOut;
 uniform int u_outTransfer;    // 0 sRGB, 1 γ2.2, 2 linear, 3 γ1.8
 uniform bool u_hasCurves;
+uniform bool u_srcSrgb;       // source texture is sRGB-encoded (camera / photos)
+uniform float u_grain;        // 0..1
+uniform uint u_grainSeed;
 
 const float LOG2_018 = -2.4739311883324122;
 const float PAPER_X_MIN = -8.0;
@@ -88,16 +91,22 @@ float curve(float v, int ch) {
   return mix(a, b, t);
 }
 
-vec3 convertPixel(vec3 rgb) {
-  vec3 D = -log(max(rgb, vec3(1e-6))) / log(10.0) + u_logBase;
-  if (u_filmType == 1) {
-    float s = dot(u_bwMix, vec3(1.0));
-    float d = dot(u_bwMix, D) / (s == 0.0 ? 1.0 : s);
-    D = vec3(d);
+vec3 convertPixel(vec3 rgbIn) {
+  vec3 rgb = u_srcSrgb ? vec3(srgbDecode(rgbIn.r), srgbDecode(rgbIn.g), srgbDecode(rgbIn.b)) : rgbIn;
+  vec3 E;
+  if (u_filmType == 3) {
+    E = rgb;
+  } else {
+    vec3 D = -log(max(rgb, vec3(1e-6))) / log(10.0) + u_logBase;
+    if (u_filmType == 1) {
+      float s = dot(u_bwMix, vec3(1.0));
+      float d = dot(u_bwMix, D) / (s == 0.0 ? 1.0 : s);
+      D = vec3(d);
+    }
+    vec3 n;
+    for (int c = 0; c < 3; c++) n[c] = bend((D[c] - u_dLo[c]) * u_invRange[c], u_mid[c]) + u_offset[c];
+    E = 0.18 * exp2(u_hiStops + u_sceneStops * (n - 1.0));
   }
-  vec3 n;
-  for (int c = 0; c < 3; c++) n[c] = bend((D[c] - u_dLo[c]) * u_invRange[c], u_mid[c]) + u_offset[c];
-  vec3 E = 0.18 * exp2(u_hiStops + u_sceneStops * (n - 1.0));
   vec3 W = u_camToWork * E;
 
   vec3 y;
@@ -139,6 +148,24 @@ vec3 convertPixel(vec3 rgb) {
   return o;
 }
 
+// Integer hash (PCG-style) for per-pixel grain; stable across GPUs.
+float hash01(uvec2 p, uint seed) {
+  uint v = p.x * 1664525u + p.y * 1013904223u + seed * 2654435769u;
+  v ^= v >> 16; v *= 2246822519u; v ^= v >> 13; v *= 3266489917u; v ^= v >> 16;
+  return float(v) / 4294967295.0;
+}
+
+vec3 addGrain(vec3 o) {
+  if (u_grain <= 0.0) return o;
+  uvec2 px = uvec2(gl_FragCoord.xy);
+  // Two octaves (fine + 2×2 clumps) read as film grain rather than digital noise.
+  float n = (hash01(px, u_grainSeed) - 0.5) * 0.6 + (hash01(px / 2u, u_grainSeed + 7u) - 0.5) * 0.4;
+  float y = dot(o, vec3(0.2126, 0.7152, 0.0722));
+  // Strongest in the midtones, like silver/dye clouds.
+  float amt = u_grain * 0.11 * (0.35 + 2.6 * y * (1.0 - y));
+  return clamp(o + n * amt, 0.0, 1.0);
+}
+
 void main() {
   vec3 p = vec3(v_uv, 1.0);
   vec2 ouv = vec2(dot(u_view0, p), dot(u_view1, p));
@@ -158,5 +185,5 @@ void main() {
     outColor = vec4(encodeT(o.r, u_outTransfer), encodeT(o.g, u_outTransfer), encodeT(o.b, u_outTransfer), 1.0);
     return;
   }
-  outColor = vec4(convertPixel(rgb), 1.0);
+  outColor = vec4(addGrain(convertPixel(rgb)), 1.0);
 }

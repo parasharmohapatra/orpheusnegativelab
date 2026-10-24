@@ -26,7 +26,8 @@ export const HSL_CENTRES = [25, 55, 100, 140, 195, 250, 290, 330];
  * then either uploaded as uniforms or fed to the reference implementation.
  */
 export interface RenderParams {
-  filmType: 0 | 1 | 2;
+  /** 0 C-41, 1 B&W, 2 E-6, 3 positive photo (no inversion: E is the input itself). */
+  filmType: 0 | 1 | 2 | 3;
   logBase: Vec3;
   bwMix: Vec3;
   /** Normalized density: n = (D − dLo) · invRange (sign flipped for slides). */
@@ -46,6 +47,11 @@ export interface RenderParams {
   paperLut: Float32Array;
   /** Exposure added by midtone metering (stops), for display. */
   autoEv: number;
+  /** Source texture holds sRGB-encoded 8-bit values (camera/photos) rather than linear. */
+  srcSrgb: boolean;
+  /** Film grain amount, 0..1 (GPU only; applied per output pixel). */
+  grain: number;
+  grainSeed: number;
   shadows: number;
   highlights: number;
   preserveHue: boolean;
@@ -114,14 +120,26 @@ export const PAPER_X_MAX = 6;
  * a gentle toe (shadows keep separation instead of sinking), grey at 0.46 encoded,
  * and a long shoulder so highlights roll off rather than clip.
  */
-const PAPER_POINTS: Record<Exclude<Recipe['tone']['printCurve'], 'linear'>, [number, number][]> = {
+type PaperId = Exclude<Recipe['tone']['printCurve'], 'linear'> | 'photo';
+
+/** For ordinary photos: sRGB's own response (so no look = no change) with a soft shoulder. */
+const PHOTO_POINTS: [number, number][] = (() => {
+  const enc = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const pts: [number, number][] = [];
+  for (let x = -8; x <= 1.5; x += 0.5) pts.push([x, enc(0.18 * 2 ** x)]);
+  pts.push([2, 0.9], [2.5, 0.965], [3.2, 1], [6, 1]);
+  return pts;
+})();
+
+const PAPER_POINTS: Record<PaperId, [number, number][]> = {
+  photo: PHOTO_POINTS,
   soft: [[-8, 0], [-6, 0.035], [-5, 0.07], [-4, 0.115], [-3, 0.17], [-2, 0.245], [-1, 0.345], [0, 0.46], [1, 0.63], [2, 0.8], [2.5, 0.87], [3, 0.92], [4, 0.975], [6, 1]],
   standard: [[-8, 0], [-6, 0.02], [-5, 0.045], [-4, 0.085], [-3, 0.135], [-2, 0.205], [-1, 0.315], [0, 0.46], [1, 0.67], [2, 0.86], [2.5, 0.92], [3, 0.96], [4, 0.99], [6, 1]],
   dense: [[-8, 0], [-6, 0.01], [-5, 0.025], [-4, 0.05], [-3, 0.09], [-2, 0.16], [-1, 0.285], [0, 0.46], [1, 0.69], [2, 0.89], [2.5, 0.94], [3, 0.975], [4, 0.995], [6, 1]],
 };
 
 /** Bake the paper curve, with contrast (stretch around grey) and blacks/whites (lift or crush the ends). */
-export function bakePaper(curve: Recipe['tone']['printCurve'], contrast: number, blacks: number, whites: number): Float32Array {
+export function bakePaper(curve: Recipe['tone']['printCurve'] | 'photo', contrast: number, blacks: number, whites: number): Float32Array {
   const pts = PAPER_POINTS[curve === 'linear' ? 'standard' : curve];
   const span = PAPER_X_MAX - PAPER_X_MIN;
   const base = curveToLut(pts.map(([x, y]) => ({ x: (x - PAPER_X_MIN) / span, y })), LUT_SIZE);
@@ -232,6 +250,9 @@ export function buildParams(
     printMode,
     paperLut,
     autoEv,
+    srcSrgb: false,
+    grain: 0,
+    grainSeed: 0,
     shadows: t.shadows,
     highlights: t.highlights,
     preserveHue: t.preserveHue,
@@ -244,5 +265,58 @@ export function buildParams(
     workToOut: workingToOutput(output),
     outTransfer: OUTPUT_SPACES[output].transfer,
     curves: curvesIdentity ? null : bakeCurves(cv, lookCurves, ls),
+  };
+}
+
+/**
+ * Parameters for an ordinary (positive) photo with a film look: the camera mode.
+ * No inversion; the look's tone, colour and curves are applied to the photo's own tones.
+ */
+export function buildPhotoParams(opts: { lookId: string | null; strength: number; grain: number; exposure?: number; grainSeed?: number }): RenderParams {
+  const look = findLook(opts.lookId);
+  const ls = look ? opts.strength : 0;
+  const clamp1 = (v: number) => Math.max(-1.5, Math.min(1.5, v));
+  const tone = { contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 };
+  if (look?.tone) for (const [k, v] of Object.entries(look.tone)) tone[k as keyof typeof tone] = clamp1((v ?? 0) * ls);
+  const c = { temp: 0, tint: 0, saturation: 0, vibrance: 0, hslHue: new Array(8).fill(0), hslSat: new Array(8).fill(0), hslLum: new Array(8).fill(0) };
+  if (look?.color) {
+    for (const k of ['temp', 'tint', 'saturation', 'vibrance'] as const) c[k] = clamp1((look.color[k] ?? 0) * ls);
+    for (const k of ['hslHue', 'hslSat', 'hslLum'] as const) look.color[k]?.forEach((v, i) => (c[k][i] = clamp1(v * ls)));
+  }
+  // B&W looks only shape tone, so a colour photo also needs desaturating.
+  if (look?.bw && ls > 0) c.saturation = -Math.min(1, ls);
+  const gain = Math.pow(2, opts.exposure ?? 0);
+  const ident: [number, number][] = [[0, 0], [1, 1]];
+  const line = ident.map(([x, y]) => ({ x, y }));
+  const lookCurves = look?.curves && ls > 0 ? look.curves : null;
+  return {
+    filmType: 3,
+    logBase: [0, 0, 0],
+    bwMix: [0.25, 0.5, 0.25],
+    dLo: [0, 0, 0],
+    invRange: [1, 1, 1],
+    mid: [0, 0, 0],
+    offset: [0, 0, 0],
+    sceneStops: 1,
+    hiStops: 0,
+    camToWork: mul(REC709_TO_WORKING, mul(whiteBalance709(c.temp, c.tint), diag([gain, gain, gain]))),
+    printMode: 1,
+    paperLut: bakePaper('photo', tone.contrast, tone.blacks, tone.whites),
+    autoEv: 0,
+    shadows: tone.shadows,
+    highlights: tone.highlights,
+    preserveHue: false,
+    saturation: c.saturation,
+    vibrance: c.vibrance,
+    hslHue: c.hslHue,
+    hslSat: c.hslSat,
+    hslLum: c.hslLum,
+    hslActive: [...c.hslHue, ...c.hslSat, ...c.hslLum].some((v) => v !== 0),
+    workToOut: workingToOutput('srgb'),
+    outTransfer: OUTPUT_SPACES.srgb.transfer,
+    curves: lookCurves ? bakeCurves({ rgb: line, r: line, g: line, b: line }, lookCurves, ls) : null,
+    srcSrgb: true,
+    grain: opts.grain,
+    grainSeed: opts.grainSeed ?? 0,
   };
 }

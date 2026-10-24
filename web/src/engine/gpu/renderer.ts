@@ -118,6 +118,18 @@ export class Renderer {
     this.srcSize = [r.w, r.h];
   }
 
+  /** Upload an 8-bit sRGB image or video frame (camera mode); pair with `srcSrgb` params. */
+  setSourceImage(source: TexImageSource, width: number, height: number): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.src);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    this.srcSize = [width, height];
+  }
+
   get sourceSize(): [number, number] {
     return this.srcSize;
   }
@@ -152,6 +164,9 @@ export class Renderer {
     m3('u_lmsToWork', LMS_TO_WORKING);
     m3('u_workToOut', p.workToOut);
     gl.uniform1i(this.u('u_outTransfer'), p.outTransfer);
+    gl.uniform1i(this.u('u_srcSrgb'), p.srcSrgb ? 1 : 0);
+    gl.uniform1f(this.u('u_grain'), p.grain);
+    gl.uniform1ui(this.u('u_grainSeed'), p.grainSeed >>> 0);
     this.hasCurves = !!p.curves;
     gl.uniform1i(this.u('u_hasCurves'), this.hasCurves ? 1 : 0);
     gl.bindTexture(gl.TEXTURE_2D, this.curves);

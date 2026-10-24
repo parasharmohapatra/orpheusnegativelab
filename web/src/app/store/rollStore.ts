@@ -63,7 +63,7 @@ interface State {
   /** Frames touched by the last bulk edit, so undo/redo treat it as one step. */
   lastGroup: string[] | null;
   redoGroup: string[] | null;
-  view: 'edit' | 'library';
+  view: 'edit' | 'library' | 'camera';
   /** Where a shift-click range starts. */
   anchorId: string | null;
   /** With several frames selected, edits apply to all of them. */
