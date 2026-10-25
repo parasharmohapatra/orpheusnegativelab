@@ -32,6 +32,8 @@ export interface ExportJob {
   geometry: Geometry;
   settings: ExportSettings;
   tiffTransfer?: TiffTransfer;
+  /** Chroma noise reduction (off for ordinary photos). */
+  chromaNR?: boolean;
 }
 
 export interface ExportResult {
@@ -59,7 +61,7 @@ export async function exportFrame(job: ExportJob, onProgress?: (f: number) => vo
     outH = Math.max(1, Math.round(outH * s));
   }
   const toSource = outputToSource(image.width, image.height, geo);
-  const rgb = renderTiled(image, job.params, toSource, outW, outH, chromaRadius(meta.kind, true), (f) => onProgress?.(0.3 + f * 0.55));
+  const rgb = renderTiled(image, job.params, toSource, outW, outH, job.chromaNR === false ? 0 : chromaRadius(meta.kind, true), (f) => onProgress?.(0.3 + f * 0.55));
 
   let data = rgb;
   let w = outW;

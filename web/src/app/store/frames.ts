@@ -5,7 +5,7 @@ import { applyAffine, clampCrop, invertAffine, outputSize, outputToSource, withO
 import { analyzeFrame, FULL_RECT, type FrameStats } from '../../engine/pipeline/analysis';
 import { buildParams, type RenderParams } from '../../engine/pipeline/params';
 import { balancedDensity, renderCpu, sampleBilinear, toRGBA8 } from '../../engine/pipeline/reference';
-import type { CropRect, Recipe } from '../../engine/pipeline/recipe';
+import { defaultPhotoRecipe, type CropRect, type Recipe } from '../../engine/pipeline/recipe';
 import type { RollStats } from '../../engine/pipeline/roll';
 import { decodeFile } from '../../engine/workers/client';
 import { fingerprint, loadRecipe, requestPersistence, saveRecipe } from '../persistence/db';
@@ -53,7 +53,7 @@ export function ensureProxy(id: string): Promise<LinearImage> {
   if (running) return running;
   const f = useStore.getState().frames.find((x) => x.id === id);
   if (!f) return Promise.reject(new Error('Unknown frame'));
-  const p = decodeFile(f.file, undefined, true)
+  const p = decodeFile(f.file, undefined, true, !isPhoto(f))
     .then((d) => {
       remember(id, d.proxy);
       if (!f.meta) ingestDecoded(f.id, d.meta, d.analysis);
@@ -66,7 +66,11 @@ export function ensureProxy(id: string): Promise<LinearImage> {
 
 // ---------- opening files ----------
 
-export async function openFiles(files: File[]): Promise<void> {
+/** Ordinary photos skip the negative-only chroma noise reduction. */
+const isPhoto = (f: FrameEntry) => f.recipe.film.type === 'photo';
+
+/** Open files as film scans, or with `asPhotos` as ordinary pictures for film looks. */
+export async function openFiles(files: File[], opts: { asPhotos?: boolean } = {}): Promise<void> {
   const accepted = files.filter((f) => kindOf(f.name));
   const skipped = files.length - accepted.length;
   if (!accepted.length) {
@@ -77,7 +81,7 @@ export async function openFiles(files: File[]): Promise<void> {
   const entries = await Promise.all(
     accepted.map(async (file) => {
       const fp = await fingerprint(file);
-      return newFrameEntry(file, kindOf(file.name)!, fp, await loadRecipe(fp));
+      return newFrameEntry(file, kindOf(file.name)!, fp, (await loadRecipe(fp)) ?? (opts.asPhotos ? defaultPhotoRecipe() : null));
     }),
   );
   useStore.getState().addFrames(entries);
@@ -94,7 +98,7 @@ async function ingest(id: string): Promise<void> {
   if (!f || f.status !== 'pending') return;
   st.patchFrame(id, { status: 'decoding' });
   try {
-    const d = await decodeFile(f.file, undefined, id === st.currentId);
+    const d = await decodeFile(f.file, undefined, id === st.currentId, !isPhoto(f));
     ingestDecoded(id, d.meta, d.analysis);
     if (id === useStore.getState().currentId || proxies.size < PROXY_CACHE) remember(id, d.proxy);
   } catch (err) {
@@ -177,7 +181,7 @@ export function renderPreview(f: FrameEntry, roll: RollStats | null, maxPx: numb
   const p = paramsFor({ ...f, recipe }, roll, 'srgb');
   if (!f.analysis || !p) return null;
   const own = recipe.geometry;
-  const untouched = own.crop.w >= 0.999 && own.crop.h >= 0.999 && own.straighten === 0;
+  const untouched = own.autoFrame && own.crop.w >= 0.999 && own.crop.h >= 0.999 && own.straighten === 0;
   const g = withOrientation(untouched ? { ...own, crop: autoFrameCrop(f) ?? own.crop } : own, f.meta!.orientation);
   const [ow, oh] = outputSize(f.analysis.width, f.analysis.height, g);
   const s = Math.min(1, maxPx / Math.max(ow, oh));
@@ -239,6 +243,12 @@ useStore.subscribe((s, prev) => {
       const old = before.get(f.id);
       if (old && old.recipe === f.recipe && old.stats === f.stats) continue;
       if (old && old.recipe !== f.recipe) {
+        // Photo ↔ negative changes whether the proxy is noise-reduced: decode it again.
+        if ((old.recipe.film.type === 'photo') !== isPhoto(f) && proxies.has(f.id)) {
+          proxies.delete(f.id);
+          listeners.forEach((l) => l());
+          if (f.id === s.currentId) void ensureProxy(f.id).catch(() => undefined);
+        }
         refreshStats(f.id);
         clearTimeout(saveTimers.get(f.id));
         saveTimers.set(f.id, setTimeout(() => void saveRecipe(f.fingerprint, useStore.getState().frames.find((x) => x.id === f.id)!.recipe), 600));

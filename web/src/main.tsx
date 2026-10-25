@@ -15,7 +15,9 @@ createRoot(document.getElementById('root')!).render(
 if (import.meta.env.DEV) {
   // ?devload=/@fs/abs/path/a.CR2,/@fs/abs/path/b.CR2 opens files served by the dev server.
   void import('./app/store/rollStore').then((m) => ((window as unknown as { __onl: unknown }).__onl = m));
-  const list = new URLSearchParams(location.search).get('devload');
+  const q = new URLSearchParams(location.search);
+  const asPhotos = q.has('devphotos');
+  const list = q.get('devload') ?? q.get('devphotos');
   if (list) {
     void import('./app/store/frames').then(async ({ openFiles }) => {
       const files = await Promise.all(
@@ -24,7 +26,7 @@ if (import.meta.env.DEV) {
           return new File([blob], decodeURIComponent(p.split('/').pop()!));
         }),
       );
-      await openFiles(files);
+      await openFiles(files, { asPhotos });
     });
   }
 }

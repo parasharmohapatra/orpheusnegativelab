@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { defaultRecipe, type FilmType, type RangeMode } from '../../engine/pipeline/recipe';
+import { defaultRecipe, setFilmType, type FilmType, type RangeMode } from '../../engine/pipeline/recipe';
 import { BUILTIN_PRESETS } from '../store/presets';
 import { FILM_LOOKS } from '../../engine/pipeline/looks';
 import { useStore, type FrameEntry } from '../store/rollStore';
@@ -22,8 +22,8 @@ export function BulkBar({ compact = false }: { compact?: boolean }) {
   const done = (what: string) => notify(`${what} · ${n} frame${n === 1 ? '' : 's'}`);
 
   const film = (t: FilmType) => {
-    editFrames(selected, (d) => void (d.film.type = t));
-    done(t === 'bw' ? 'Black & white' : t === 'e6' ? 'Slide' : 'Colour negative');
+    editFrames(selected, (d) => setFilmType(d, t));
+    done(t === 'bw' ? 'Black & white' : t === 'e6' ? 'Slide' : t === 'photo' ? 'Photo' : 'Colour negative');
   };
   const range = (m: RangeMode) => {
     editFrames(selected, (d) => void (d.convert.rangeMode = m));
@@ -55,6 +55,7 @@ export function BulkBar({ compact = false }: { compact?: boolean }) {
         <select className="text-input small" value="" aria-label="Film type" onChange={(e) => e.target.value && film(e.target.value as FilmType)}>
           <option value="">Film…</option>
           <option value="c41">Colour negative</option>
+          <option value="photo">Photo (no inversion)</option>
           <option value="bw">B&amp;W negative</option>
           <option value="e6">Slide</option>
         </select>
@@ -215,6 +216,7 @@ function Card({
   const tags: string[] = [];
   if (r.film.type === 'bw') tags.push('B&W');
   if (r.film.type === 'e6') tags.push('Slide');
+  if (r.film.type === 'photo') tags.push('Photo');
   if (r.convert.rangeMode !== 'frame') tags.push(r.convert.rangeMode === 'roll' ? 'Roll' : 'Blend');
   const look = FILM_LOOKS.find((l) => l.id === r.look.id);
   if (look) tags.push(look.name);

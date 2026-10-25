@@ -3,9 +3,9 @@ import { decodeForEditing } from '../decode/index';
 import type { DecodeRequest, DecodeResponse } from './protocol';
 
 self.onmessage = async (e: MessageEvent<DecodeRequest>) => {
-  const { id, file, tiffTransfer } = e.data;
+  const { id, file, tiffTransfer, chromaNR } = e.data;
   try {
-    const frame = await decodeForEditing(file, { tiffTransfer });
+    const frame = await decodeForEditing(file, { tiffTransfer, chromaNR });
     const msg: DecodeResponse = { id, ok: true, frame };
     (self as DedicatedWorkerGlobalScope).postMessage(msg, [frame.proxy.data.buffer, frame.analysis.data.buffer]);
   } catch (err) {

@@ -25,6 +25,8 @@ export interface SourceMeta {
   clipFraction?: Vec3;
   /** True for 8-bit sources, which can posterize when inverted. */
   lowPrecision: boolean;
+  /** Camera daylight white balance (per-channel gain, green = 1) for RAW photos; [1,1,1] otherwise. */
+  daylightWB?: Vec3;
   exif: {
     make?: string;
     model?: string;

@@ -291,7 +291,8 @@ export const useStore = create<State & Actions>((set, get) => ({
   },
 
   recomputeRoll() {
-    const stats = get().frames.flatMap((f) => (f.stats ? [f.stats] : []));
+    // Ordinary photos have no film base: keep them out of the roll's statistics.
+    const stats = get().frames.flatMap((f) => (f.stats && f.recipe.film.type !== 'photo' ? [f.stats] : []));
     set({ roll: computeRollStats(stats) });
   },
 

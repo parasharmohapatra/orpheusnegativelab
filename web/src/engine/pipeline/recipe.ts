@@ -1,9 +1,9 @@
 import type { Vec3 } from '../types';
 
-export type FilmType = 'c41' | 'bw' | 'e6';
+export type FilmType = 'c41' | 'bw' | 'e6' | 'photo';
 export type RangeMode = 'frame' | 'roll' | 'blend';
 export type BalanceMode = 'endpoints' | 'endpoints+mid' | 'neutral' | 'none';
-export type PrintCurve = 'linear' | 'soft' | 'standard' | 'dense';
+export type PrintCurve = 'linear' | 'natural' | 'soft' | 'standard' | 'dense';
 
 export interface CurvePoint {
   x: number;
@@ -108,6 +108,31 @@ const LINE: CurvePoint[] = [
   { x: 0, y: 0 },
   { x: 1, y: 1 },
 ];
+
+/**
+ * Switch film type and the settings that go with it: photos use the pass-through
+ * 'natural' tone curve without auto exposure or border detection; negatives use a print curve.
+ */
+export function setFilmType(r: Recipe, t: FilmType): void {
+  const wasPhoto = r.film.type === 'photo';
+  r.film.type = t;
+  if (t === 'photo' && !wasPhoto) {
+    r.tone.printCurve = 'natural';
+    r.convert.autoExposure = false;
+    r.geometry.autoFrame = false;
+  } else if (t !== 'photo' && wasPhoto) {
+    if (r.tone.printCurve === 'natural') r.tone.printCurve = 'standard';
+    r.convert.autoExposure = true;
+    r.geometry.autoFrame = true;
+  }
+}
+
+/** A recipe for an ordinary (positive) photo. */
+export function defaultPhotoRecipe(): Recipe {
+  const r = defaultRecipe();
+  setFilmType(r, 'photo');
+  return r;
+}
 
 export function defaultRecipe(): Recipe {
   return {

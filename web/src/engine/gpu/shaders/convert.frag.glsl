@@ -89,15 +89,20 @@ float curve(float v, int ch) {
 }
 
 vec3 convertPixel(vec3 rgb) {
-  vec3 D = -log(max(rgb, vec3(1e-6))) / log(10.0) + u_logBase;
-  if (u_filmType == 1) {
-    float s = dot(u_bwMix, vec3(1.0));
-    float d = dot(u_bwMix, D) / (s == 0.0 ? 1.0 : s);
-    D = vec3(d);
+  vec3 E;
+  if (u_filmType == 3) {
+    E = rgb; // ordinary photo: no inversion
+  } else {
+    vec3 D = -log(max(rgb, vec3(1e-6))) / log(10.0) + u_logBase;
+    if (u_filmType == 1) {
+      float s = dot(u_bwMix, vec3(1.0));
+      float d = dot(u_bwMix, D) / (s == 0.0 ? 1.0 : s);
+      D = vec3(d);
+    }
+    vec3 n;
+    for (int c = 0; c < 3; c++) n[c] = bend((D[c] - u_dLo[c]) * u_invRange[c], u_mid[c]) + u_offset[c];
+    E = 0.18 * exp2(u_hiStops + u_sceneStops * (n - 1.0));
   }
-  vec3 n;
-  for (int c = 0; c < 3; c++) n[c] = bend((D[c] - u_dLo[c]) * u_invRange[c], u_mid[c]) + u_offset[c];
-  vec3 E = 0.18 * exp2(u_hiStops + u_sceneStops * (n - 1.0));
   vec3 W = u_camToWork * E;
 
   vec3 y;

@@ -8,7 +8,7 @@ import { findLook } from './looks';
 import { rangeLambdas, type Recipe } from './recipe';
 import { blendEndpoints, type RollStats } from './roll';
 
-export const FILM_TYPE_ID = { c41: 0, bw: 1, e6: 2 } as const;
+export const FILM_TYPE_ID = { c41: 0, bw: 1, e6: 2, photo: 3 } as const;
 
 /** Typical negative gamma; scene stops = density range / (γ · log10 2). */
 const NEG_GAMMA = 0.6;
@@ -26,7 +26,8 @@ export const HSL_CENTRES = [25, 55, 100, 140, 195, 250, 290, 330];
  * then either uploaded as uniforms or fed to the reference implementation.
  */
 export interface RenderParams {
-  filmType: 0 | 1 | 2;
+  /** 0 C-41, 1 B&W, 2 E-6, 3 ordinary photo (no inversion: E is the linear input). */
+  filmType: 0 | 1 | 2 | 3;
   logBase: Vec3;
   bwMix: Vec3;
   /** Normalized density: n = (D − dLo) · invRange (sign flipped for slides). */
@@ -114,7 +115,17 @@ export const PAPER_X_MAX = 6;
  * a gentle toe (shadows keep separation instead of sinking), grey at 0.46 encoded,
  * and a long shoulder so highlights roll off rather than clip.
  */
+/** For ordinary photos: sRGB's own response (so no look = no change) with a soft shoulder. */
+const NATURAL_POINTS: [number, number][] = (() => {
+  const enc = (v: number) => (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const pts: [number, number][] = [];
+  for (let x = -8; x <= 1.5; x += 0.5) pts.push([x, enc(0.18 * 2 ** x)]);
+  pts.push([2, 0.9], [2.5, 0.965], [3.2, 1], [6, 1]);
+  return pts;
+})();
+
 const PAPER_POINTS: Record<Exclude<Recipe['tone']['printCurve'], 'linear'>, [number, number][]> = {
+  natural: NATURAL_POINTS,
   soft: [[-8, 0], [-6, 0.035], [-5, 0.07], [-4, 0.115], [-3, 0.17], [-2, 0.245], [-1, 0.345], [0, 0.46], [1, 0.63], [2, 0.8], [2.5, 0.87], [3, 0.92], [4, 0.975], [6, 1]],
   standard: [[-8, 0], [-6, 0.02], [-5, 0.045], [-4, 0.085], [-3, 0.135], [-2, 0.205], [-1, 0.315], [0, 0.46], [1, 0.67], [2, 0.86], [2.5, 0.92], [3, 0.96], [4, 0.99], [6, 1]],
   dense: [[-8, 0], [-6, 0.01], [-5, 0.025], [-4, 0.05], [-3, 0.09], [-2, 0.16], [-1, 0.285], [0, 0.46], [1, 0.69], [2, 0.89], [2.5, 0.94], [3, 0.975], [4, 0.995], [6, 1]],
@@ -147,7 +158,7 @@ export function buildParams(
   recipe: Recipe,
   stats: FrameStats,
   roll: RollStats | null,
-  meta: Pick<SourceMeta, 'toRec709'>,
+  meta: Pick<SourceMeta, 'toRec709' | 'daylightWB'>,
   output: OutputSpaceId,
 ): RenderParams {
   const { base, ends } = resolveEndpoints(recipe, stats, roll);
@@ -197,17 +208,23 @@ export function buildParams(
   // (backlit, dusk, small bright areas) are lifted part of the way. It never darkens:
   // bright, high-key frames are already placed well by the highlight anchor.
   let autoEv = 0;
-  if (recipe.convert.autoExposure && stats.bw.hi > stats.bw.lo) {
+  if (recipe.convert.autoExposure && filmType !== 3 && stats.bw.hi > stats.bw.lo) {
     const nMed = (stats.bw.med - stats.bw.lo) / (stats.bw.hi - stats.bw.lo);
     const nOf = filmType === 2 ? 1 - nMed : nMed;
     const medStops = HI_STOPS + ends.sceneStops * (nOf - 1);
     const { exp } = rangeLambdas(recipe.convert);
     autoEv = Math.max(0, Math.min(2, METER_STRENGTH * exp * (METER_TARGET - medStops)));
   }
+  // On a colour photo, a B&W look must also remove the colour (B&W film does that itself).
+  if (filmType === 3 && look?.bw && ls > 0) c.saturation = Math.min(c.saturation, -Math.min(1, ls));
   const exposureGain = Math.pow(2, t.exposure + autoEv);
   const camToWork = mul(
     REC709_TO_WORKING,
-    mul(whiteBalance709(c.temp, c.tint), mul(meta.toRec709, diag([exposureGain, exposureGain, exposureGain]))),
+    mul(
+      whiteBalance709(c.temp, c.tint),
+      // Photos from RAW need the camera's white balance (negatives get theirs from the film base).
+      mul(meta.toRec709, mul(diag(filmType === 3 ? (meta.daylightWB ?? [1, 1, 1]) : [1, 1, 1]), diag([exposureGain, exposureGain, exposureGain]))),
+    ),
   );
 
   const printMode = t.printCurve === 'linear' ? 0 : 1;

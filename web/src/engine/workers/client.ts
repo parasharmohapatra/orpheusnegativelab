@@ -45,9 +45,9 @@ class DecodePool {
     }
   }
 
-  decode(file: File, tiffTransfer?: TiffTransfer, priority = false): Promise<DecodedFrame> {
+  decode(file: File, tiffTransfer?: TiffTransfer, priority = false, chromaNR = true): Promise<DecodedFrame> {
     return new Promise((resolve, reject) => {
-      const item = { req: { id: nextId++, file, tiffTransfer }, resolve, reject };
+      const item = { req: { id: nextId++, file, tiffTransfer, chromaNR }, resolve, reject };
       if (priority) this.queue.unshift(item);
       else this.queue.push(item);
       this.pump();
@@ -66,9 +66,9 @@ class DecodePool {
 }
 
 let pool: DecodePool | null = null;
-export function decodeFile(file: File, tiffTransfer?: TiffTransfer, priority = false): Promise<DecodedFrame> {
+export function decodeFile(file: File, tiffTransfer?: TiffTransfer, priority = false, chromaNR = true): Promise<DecodedFrame> {
   pool ??= new DecodePool(Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 1)));
-  return pool.decode(file, tiffTransfer, priority);
+  return pool.decode(file, tiffTransfer, priority, chromaNR);
 }
 
 let exportWorker: Worker | null = null;

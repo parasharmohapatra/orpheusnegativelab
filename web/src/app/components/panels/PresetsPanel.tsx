@@ -48,8 +48,9 @@ export function PresetsPanel() {
   const [mine, setMine] = useState<StoredPreset[]>([]);
   const [name, setName] = useState('');
   const [sections, setSections] = useState<RecipeSection[]>(DEFAULT_SECTIONS);
-  const isBW = frame?.recipe.film.type === 'bw';
-  const looks = useMemo(() => FILM_LOOKS.filter((l) => !!l.bw === isBW), [isBW]);
+  const filmType = frame?.recipe.film.type;
+  // Photos can take any look; negatives get the looks matching their film.
+  const looks = useMemo(() => (filmType === 'photo' ? FILM_LOOKS : FILM_LOOKS.filter((l) => !!l.bw === (filmType === 'bw'))), [filmType]);
   const previews = useLookPreviews(looks);
 
   useEffect(() => {

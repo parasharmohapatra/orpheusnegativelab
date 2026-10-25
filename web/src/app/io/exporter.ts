@@ -66,7 +66,7 @@ export async function runExport(ids: string[], settings: ExportSettings): Promis
       continue;
     }
     try {
-      const result = await exportInWorker({ file: f.file, params, geometry: f.recipe.geometry, settings }, (p) => update({ progress: p }));
+      const result = await exportInWorker({ file: f.file, params, geometry: f.recipe.geometry, settings, chromaNR: f.recipe.film.type !== 'photo' }, (p) => update({ progress: p }));
       const name = `${baseName(f.name)}.${result.ext}`;
       if (dir) {
         const fh = await dir.getFileHandle(name, { create: true });

@@ -264,7 +264,8 @@ export function Viewer() {
     const parts: string[] = [];
     const idx = useStore.getState().frames.findIndex((f) => f.id === frame.id) + 1;
     parts.push(`Frame ${idx}`);
-    const film = frame.recipe.film.type === 'bw' ? 'Black & white' : frame.recipe.film.type === 'e6' ? 'Slide' : 'Colour negative';
+    const t = frame.recipe.film.type;
+    const film = t === 'bw' ? 'Black & white' : t === 'e6' ? 'Slide' : t === 'photo' ? 'Photo' : 'Colour negative';
     parts.push(film);
     if (frame.meta) parts.push(`${frame.meta.fullWidth} × ${frame.meta.fullHeight}`);
     if (frame.meta?.exif.model) parts.push(frame.meta.exif.model);

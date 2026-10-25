@@ -11,23 +11,26 @@ const ACCEPT = ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',');
 export function useFilePickers() {
   const files = useRef<HTMLInputElement | null>(null);
   const folder = useRef<HTMLInputElement | null>(null);
+  const photos = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    const make = (dir: boolean) => {
+    const make = (dir: boolean, asPhotos = false) => {
       const el = document.createElement('input');
       el.type = 'file';
       el.multiple = true;
       if (dir) el.setAttribute('webkitdirectory', '');
-      else el.accept = ACCEPT;
+      // `image/*` lets phones offer the photo library as well as files.
+      else el.accept = asPhotos ? `image/*,${ACCEPT}` : ACCEPT;
       el.onchange = () => {
-        if (el.files?.length) void openFiles([...el.files]);
+        if (el.files?.length) void openFiles([...el.files], { asPhotos });
         el.value = '';
       };
       return el;
     };
     files.current = make(false);
     folder.current = make(true);
+    photos.current = make(false, true);
   }, []);
-  return { openFiles: () => files.current?.click(), openFolder: () => folder.current?.click() };
+  return { openFiles: () => files.current?.click(), openFolder: () => folder.current?.click(), openPhotos: () => photos.current?.click() };
 }
 
 export function Header() {
@@ -58,8 +61,11 @@ export function Header() {
         </div>
       )}
       <div className="header-actions">
-        <button type="button" className="btn" onClick={pickers.openFolder} title="Open a folder of scans">
+        <button type="button" className="btn" onClick={pickers.openFolder} title="Open a folder of film scans">
           Open roll
+        </button>
+        <button type="button" className="btn" onClick={pickers.openPhotos} title="Add ordinary photos to apply film looks">
+          Add photos
         </button>
         {frames.length > 0 && (
           <>
@@ -279,10 +285,13 @@ export function EmptyState() {
             Choose files
           </button>
         </div>
+        <button type="button" className="btn ghost" onClick={pickers.openPhotos}>
+          Or give regular photos a film look →
+        </button>
         <div className="empty-formats">
           RAW: CR2 · CR3 · NEF · ARW · DNG · RAF · ORF · RW2 · PEF
           <br />
-          16-bit TIFF · JPEG · PNG
+          16-bit TIFF · JPEG · PNG · HEIC
         </div>
       </div>
     </div>

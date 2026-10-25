@@ -14,6 +14,7 @@ Convert colour negative, black-and-white and slide film scans into finished posi
 - **Film looks** inspired by Portra 160/400/800, Ektar, Gold, UltraMax, ColorPlus, Pro 400H, Superia, C200, Velvia, Provia, CineStill 800T/50D/400D, Vision3 250D/500T, plus B&W stocks (HP5, Tri-X, Delta, Pan F, T-Max, Fomapan).
   - Each look has a strength slider and a live preview on your own frame.
   - Looks layer on top of your adjustments rather than replacing them.
+- **Film looks on regular photos.** Use **Add photos** to load JPEG, PNG, HEIC, TIFF or camera RAW files as ordinary pictures: no inversion, no noise reduction, and a "Natural" tone curve, so with no look they pass through unchanged. Every film look (including B&W stocks), adjustment, bulk tool and export works on them. You can also switch any frame to **Photo** under Convert → Film.
 - **Library grid and bulk editing.** Select frames (click, ⇧ for a range, ⌘ to add), then use the selection bar to set the film type, balance or look, rotate, reset, sync or export them all at once.
   - With **Edit all** on, every slider in Develop adjusts the whole selection.
   - Undo reverts a bulk edit across all the frames it touched.

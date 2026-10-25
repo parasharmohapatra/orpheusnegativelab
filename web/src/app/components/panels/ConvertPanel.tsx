@@ -1,4 +1,4 @@
-import { defaultRecipe, type BalanceMode, type FilmType, type RangeMode } from '../../../engine/pipeline/recipe';
+import { defaultRecipe, setFilmType, type BalanceMode, type FilmType, type RangeMode } from '../../../engine/pipeline/recipe';
 import { resolveEndpoints } from '../../../engine/pipeline/params';
 import { srgbEncode } from '../../../engine/color/transfer';
 import { useCurrentFrame, useStore } from '../../store/rollStore';
@@ -32,13 +32,21 @@ export function ConvertPanel() {
             { value: 'c41', label: 'Colour neg', title: 'C-41 / ECN-2 colour negative' },
             { value: 'bw', label: 'B&W neg' },
             { value: 'e6', label: 'Slide', title: 'E-6 positive transparency' },
+            { value: 'photo', label: 'Photo', title: 'An ordinary photo: no inversion, just film looks and adjustments' },
           ]}
           value={r.film.type}
-          onChange={(v) => edit((d) => void (d.film.type = v))}
+          onChange={(v) => edit((d) => setFilmType(d, v))}
         />
-        {lowPrecision && <p className="hint warn">This is an 8-bit file. Inverting stretches it a lot, so expect banding; use a RAW or 16-bit TIFF scan for best results.</p>}
+        {r.film.type === 'photo' && (
+          <p className="hint">
+            An ordinary photo: nothing is inverted or measured. Pick a film look under <em>Looks</em>, then fine-tune in Adjust, Colour and Curves.
+          </p>
+        )}
+        {lowPrecision && r.film.type !== 'photo' && <p className="hint warn">This is an 8-bit file. Inverting stretches it a lot, so expect banding; use a RAW or 16-bit TIFF scan for best results.</p>}
       </Section>
 
+      {r.film.type !== 'photo' && (
+      <>
       <Section title="Film base">
         <div className="swatch-row">
           <div className="swatch" style={{ background: base ? toCss(base) : 'transparent' }} title="Measured film base (orange mask)" />
@@ -149,6 +157,9 @@ export function ConvertPanel() {
           Lower <em>scene range</em> for punchier conversions, raise it to hold more highlight and shadow detail.
         </p>
       </Section>
+
+      </>
+      )}
 
       {r.film.type === 'bw' && (
         <Section title="B&W channel mix">

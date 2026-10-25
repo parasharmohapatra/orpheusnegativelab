@@ -10,7 +10,7 @@ export const RAW_EXTENSIONS = [
   'cr2', 'cr3', 'crw', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'dng', 'raf', 'orf', 'rw2', 'pef', 'srw', 'x3f', 'erf', 'mos', 'mrw', '3fr', 'fff', 'iiq', 'rwl',
 ];
 export const TIFF_EXTENSIONS = ['tif', 'tiff'];
-export const BITMAP_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'avif'];
+export const BITMAP_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'heic', 'heif'];
 export const ACCEPTED_EXTENSIONS = [...RAW_EXTENSIONS, ...TIFF_EXTENSIONS, ...BITMAP_EXTENSIONS];
 
 export function extensionOf(name: string): string {
@@ -26,7 +26,15 @@ export function kindOf(name: string): InputKind | null {
   return null;
 }
 
+/** LibRaw pre_mul → per-channel gain normalized to green; neutral when missing. */
+function daylightFromPreMul(pm: number[] | undefined): [number, number, number] {
+  if (!pm || pm.length < 3 || !(pm[1] > 0) || !(pm[0] > 0) || !(pm[2] > 0)) return [1, 1, 1];
+  return [pm[0] / pm[1], 1, pm[2] / pm[1]];
+}
+
 export interface DecodeOptions {
+  /** Chroma noise reduction (on for negatives; off for ordinary photos). */
+  chromaNR?: boolean;
   /** Full resolution (export) instead of a fast half-size proxy decode. */
   full: boolean;
   tiffTransfer?: TiffTransfer;
@@ -58,6 +66,7 @@ async function decodeRawFile(file: File, full: boolean): Promise<FullDecode> {
       toRec709,
       orientation: FLIP_TO_ORIENTATION[r.flip] ?? FLIP_TO_ORIENTATION[0],
       clipFraction: r.clipFraction,
+      daylightWB: daylightFromPreMul(r.preMul),
       lowPrecision: false,
       exif: r.exif,
     },
@@ -133,7 +142,7 @@ export async function decodeForEditing(file: File, opts: Omit<DecodeOptions, 'fu
   const { image, meta } = await decodeFull(file, { ...opts, full: false });
   const proxy = downsample(image, PROXY_MAX);
   const shrink = Math.max(image.width, image.height) / Math.max(proxy.width, proxy.height);
-  denoiseChroma(proxy.data, proxy.width, proxy.height, chromaRadius(meta.kind, false) / shrink);
+  if (opts.chromaNR !== false) denoiseChroma(proxy.data, proxy.width, proxy.height, chromaRadius(meta.kind, false) / shrink);
   const analysis = downsampleLinear(proxy, ANALYSIS_MAX);
   return { meta, proxy, analysis };
 }

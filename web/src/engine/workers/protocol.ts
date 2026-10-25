@@ -6,6 +6,7 @@ export interface DecodeRequest {
   id: number;
   file: File;
   tiffTransfer?: TiffTransfer;
+  chromaNR?: boolean;
 }
 
 export type DecodeResponse = { id: number; ok: true; frame: DecodedFrame } | { id: number; ok: false; error: string };

@@ -19,6 +19,7 @@ export function AdjustPanel() {
         <Segmented<PrintCurve>
           label="Paper"
           options={[
+            ...(frame.recipe.film.type === 'photo' ? [{ value: 'natural' as const, label: 'Natural', title: "The photo's own tones" }] : []),
             { value: 'soft', label: 'Soft' },
             { value: 'standard', label: 'Standard' },
             { value: 'dense', label: 'Dense' },
@@ -28,11 +29,11 @@ export function AdjustPanel() {
           onChange={(v) => edit((d) => void (d.tone.printCurve = v))}
         />
         {slide('exposure', 'Exposure', -3, 3, fmtStops)}
-        <Check
+        {frame.recipe.film.type !== 'photo' && <Check
           label={`Auto exposure${frame.recipe.convert.autoExposure ? ` (${autoEv >= 0 ? '+' : ''}${autoEv.toFixed(2)} EV)` : ''}`}
           checked={frame.recipe.convert.autoExposure}
           onChange={(v) => edit((d) => void (d.convert.autoExposure = v))}
-        />
+        />}
         {slide('contrast', 'Contrast')}
       </Section>
       <Section title="Tone">
